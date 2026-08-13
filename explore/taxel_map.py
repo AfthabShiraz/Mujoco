@@ -16,9 +16,23 @@ from dataclasses import dataclass
 import mujoco as mj
 import numpy as np
 
-MODEL_DIR = pathlib.Path(__file__).resolve().parent.parent / "third_party" / "leapXELA_model"
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+MODEL_DIR = _ROOT / "third_party" / "leapXELA_model"                      # current main
+PINNED_DIR = (                                                            # what mjlab loads
+    _ROOT / "third_party" / "leapXelaMjLab" / "src" / "leap_xela_mjlab"
+    / "assets" / "leapXELA_model"
+)
+
 TACTILE_XML = MODEL_DIR / "leapxela" / "leapXela_pointcloud" / "robot.xml"
-RL_XML = MODEL_DIR / "leapXela_generated_mjx_Box.xml"
+
+# The RIGID hand mjlab actually trains on (submodule pinned at 4e8003f):
+# 17 bodies, 25 joints, 0 connects, 0 taxel sites. This is the splat encoder's
+# target. Do NOT substitute current main's file of the same name -- that one is
+# the flex model: 385 bodies, 1129 joints, 368 connects, and its 368 taxels sit
+# one-per-flex-body, which breaks the splat's group-by-body assumption.
+# See PROJECT_LOG.md §1.5b.
+RL_XML = PINNED_DIR / "leapXela_generated_mjx_Box.xml"
+FLEX_XML = MODEL_DIR / "leapXela_generated_mjx_Box.xml"
 
 # WARNING: chain order in the tactile lineage is RING, MIDDLE, INDEX, THUMB.
 # `finger` is the RING finger. Mapping by name order silently swaps index/ring.

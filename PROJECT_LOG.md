@@ -215,6 +215,34 @@ Rejected alternatives: making mjlab load Lineage B (large change; `robot.xml` ne
 
 **Also worth noting:** `robot_touch_sensor_array_mjx_generated_model.xml` has **429 sites and 421 `<touch>` sensors**, but zero sites named "taxel" — that's the *native touch sensor* model, a different representation with a different naming scheme. Don't confuse the two.
 
+### 1.5c Taxel injection into the pinned rigid model — works (`explore/03_inject_taxels.py`)
+
+368 sites injected via **`MjSpec`** into `third_party/leapXelaMjLab/.../leapXela_generated_mjx_Box.xml` (pinned `4e8003f`, 17 rigid bodies, 0 pre-existing taxels). Compiles; model goes 67 → 435 sites. Because mjlab builds its hand through `MjSpec` too (`robots/leap_xela.py:get_spec`), this transfers into an mjlab `spec_fn` nearly verbatim — no ElementTree surgery.
+
+Rendering confirms an anatomically sensible map: three 4×6 palm patches, 4×4 pads on the proximal/middle links of each finger, and dome-shaped fingertip clusters. **The sites are only visible with geoms hidden** — see below.
+
+**Burial is normal, and it is not the correctness criterion.** All 368 taxels sit *inside* their link mesh in the mjlab model — but so do **248/368 in the reference lineage-B model**, which is the one the validated CPU encoder actually uses. Chasing "taxels should be on the surface" would have been a wild goose chase.
+
+The criterion that *does* matter is the encoder's patch-locality gate:
+```python
+weights[np.abs(local[:, 2]) > self._kernel_cutoff] = 0.0
+```
+`local_z` is the contact's offset along the taxel normal, so a taxel buried *d* below the surface sees `local_z ≈ d` for a contact directly above it. **If `d ≥ kernel_cutoff` that taxel can never fire.** Defaults (`visualize_taxel_layout.py`): `kernel_sigma=0.0035`, `kernel_cutoff=0.01` (10 mm). Note the Gaussian weight uses only the *in-plane* distance — burial does not attenuate it, it only gates.
+
+Measured burial by ray-cast along each taxel's own +z, **restricted to its own body** (an early version traced all geoms and struck neighbouring fingers in the rest pose — the numbers were meaningless until isolated):
+
+| | mjlab (lineage A) | reference (lineage B) |
+|---|---|---|
+| palm | 3.00 mm | 3.00 mm — identical |
+| px links | 5.00 mm | 9.76 mm |
+| md links | 4.50 mm | 9.76 mm |
+| fingertips | 2.17 mm | 0.00 (not buried) |
+| **all 12 bodies vs 10 mm cutoff** | **max 5.00 mm — OK** | 9.76 mm — OK but within 0.24 mm of the gate |
+
+**Conclusion: every body clears the cutoff, so the splat's locality gate behaves the same in mjlab as in the reference.** The mjlab model is in fact the *safer* of the two — the reference's 9.76 mm sits 0.24 mm under its own cutoff, so `kernel_cutoff` is load-bearing and geometry-dependent there. Worth stating in the write-up, and worth not changing casually.
+
+**Still open:** the four fingertips remain a geometrically different part (~10 mm longer, §1.5b), so their 136 taxels are placed on a tip that is not the one they were calibrated against. Burial there is small (2.17–2.85 mm) and within the gate, but the *lateral* placement is unverified. This is the question for Hamid.
+
 ### 1.6 Plan-doc accuracy audit (2026-08-13) — every claim checked against source
 
 `project2_parallel_rl_sim_pipeline.md` was audited claim-by-claim and **patched**. It held up unusually well.

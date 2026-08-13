@@ -41,6 +41,39 @@ SITE_SIZE = 0.0012
 GREEN = [0.1, 0.9, 0.2, 1.0]   # body frames confirmed
 RED = [0.95, 0.15, 0.1, 1.0]   # fingertip, geometry mismatch
 
+# VirtualTaxelSensor's patch-locality cutoff. Defaults from
+# leapxela/visualize_taxel_layout.py: --kernel-sigma 0.0035, --kernel-cutoff 0.01.
+KERNEL_CUTOFF_M = 0.01
+
+
+def burial_depths(model: mj.MjModel, layout) -> dict[str, list[float]]:
+    """How far is solid geometry still outside each taxel, along its own normal?
+
+    Ray-cast from the site along its +z (outward) normal. A hit means material
+    remains outside the taxel, i.e. it sits inside the link. The trace is
+    restricted to the taxel's OWN body -- otherwise, in the rest pose, rays
+    strike neighbouring fingers and the numbers are meaningless.
+    """
+    data = mj.MjData(model)
+    mj.mj_forward(model, data)
+    original = model.geom_group.copy()
+    mask = np.array([1, 0, 0, 0, 0, 0], np.uint8)   # trace group 0 only
+    gid = np.zeros(1, np.int32)
+    out: dict[str, list[float]] = {}
+    try:
+        for e in layout.entries:
+            bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, BODY_MAP[e.body])
+            model.geom_group[:] = 1
+            model.geom_group[model.geom_bodyid == bid] = 0
+            sid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, e.site_name)
+            p = data.site_xpos[sid].copy()
+            n = data.site_xmat[sid].reshape(3, 3)[:, 2].copy()
+            dist = mj.mj_ray(model, data, p, n, mask, 1, -1, gid)
+            out.setdefault(e.body, []).append(dist if dist >= 0 else np.inf)
+    finally:
+        model.geom_group[:] = original
+    return out
+
 
 def inject(spec: mj.MjSpec, layout) -> tuple[int, int]:
     """Add one site per taxel to the mapped body. Returns (confirmed, suspect)."""
@@ -68,7 +101,16 @@ def inject(spec: mj.MjSpec, layout) -> tuple[int, int]:
 def main() -> None:
     layout = build_layout()
 
+    print(f"target: {RL_XML.relative_to(pathlib.Path.cwd())}")
     spec = mj.MjSpec.from_file(str(RL_XML))
+    existing = [s.name for s in spec.sites if s.name.startswith("taxel_")]
+    if existing:
+        raise SystemExit(
+            f"model already has {len(existing)} taxel_* sites -- this is the flex "
+            "model, not the rigid one the splat encoder needs. See PROJECT_LOG §1.5b."
+        )
+    print(f"  rigid hand: {len(spec.bodies) - 1} bodies, no taxel sites (as expected)")
+
     n_ok, n_sus = inject(spec, layout)
     model = spec.compile()
     data = mj.MjData(model)
@@ -104,28 +146,63 @@ def main() -> None:
               f"{np.median(d):>9.2f}{np.percentile(d, 95):>9.2f}{d.max():>9.2f}   {tag}")
 
     print("-" * 78)
-    print(f"worst distance-to-skin among CONFIRMED bodies: {worst_confirmed:.2f} mm")
-    print("(taxels sit ~5 mm off the mesh by construction: GRID_Z = 5.0e-3 in")
-    print(" taxel_layout.py, the pad standoff. Single-digit mm is expected and good.)\n")
+    print(f"worst distance-to-skin among CONFIRMED bodies: {worst_confirmed:.2f} mm\n")
+
+    # ---- check 1b: burial depth vs the encoder's patch-locality gate --------
+    # VirtualTaxelSensor does: weights[abs(local_z) > kernel_cutoff] = 0.
+    # local_z is the contact's offset along the taxel normal, so a taxel buried
+    # d mm below the surface sees local_z ~ d for a contact directly above it.
+    # If d >= kernel_cutoff that taxel can never fire. THIS is the criterion --
+    # not whether the taxel is visually on the surface. In the reference model
+    # 248/368 taxels are inside their own link mesh, so burial is normal.
+    print("=" * 78)
+    print("BURIAL DEPTH vs kernel_cutoff  (the gate that actually matters)")
+    print("=" * 78)
+    depths = burial_depths(model, layout)
+    ok = 0
+    for src in BODY_MAP:
+        v = np.array(depths[src])
+        fin = np.isfinite(v)
+        med = np.median(v[fin]) * 1000 if fin.any() else 0.0
+        mx = v[fin].max() * 1000 if fin.any() else 0.0
+        safe = mx < KERNEL_CUTOFF_M * 1000
+        ok += safe
+        print(f"  {src:<28} buried {fin.sum():>3}/{len(v):<3}"
+              f" median {med:>5.2f} mm  max {mx:>5.2f} mm   "
+              f"{'OK' if safe else 'EXCEEDS CUTOFF — taxel can never fire'}")
+    print("-" * 78)
+    print(f"bodies within the {KERNEL_CUTOFF_M * 1000:.0f} mm cutoff: {ok}/{len(BODY_MAP)}")
+    print("(default kernel_cutoff=0.01, kernel_sigma=0.0035 -- visualize_taxel_layout.py)\n")
 
     # ---- check 2: look at them ---------------------------------------------
     OUT.mkdir(exist_ok=True)
     model.vis.global_.offwidth, model.vis.global_.offheight = 1600, 1200
+    # The pinned file is the bare hand, with no scene: no lights, no skybox.
+    # Brighten the headlight or every render comes out near-black.
+    model.vis.headlight.ambient[:] = [0.55, 0.55, 0.55]
+    model.vis.headlight.diffuse[:] = [0.75, 0.75, 0.75]
+    model.vis.headlight.specular[:] = [0.1, 0.1, 0.1]
+
     opt = mj.MjvOption()
     opt.sitegroup[4] = 1          # taxel sites live in group 4
     opt.geomgroup[3] = 0          # hide collision-only geoms
 
+    # Frame the model automatically, then orbit around that.
+    base = mj.MjvCamera()
+    mj.mjv_defaultFreeCamera(model, base)
+
     views = {
-        "taxels_palm": dict(azimuth=90, elevation=-75, distance=0.32),
-        "taxels_side": dict(azimuth=25, elevation=-15, distance=0.32),
-        "taxels_tip": dict(azimuth=110, elevation=-35, distance=0.14),
+        "taxels_palm": dict(azimuth=90, elevation=-89, zoom=0.62),
+        "taxels_side": dict(azimuth=35, elevation=-20, zoom=0.62),
+        "taxels_tip": dict(azimuth=115, elevation=-40, zoom=0.28),
     }
     with mj.Renderer(model, height=1200, width=1600) as r:
-        for name, cam in views.items():
+        for name, view in views.items():
             c = mj.MjvCamera()
             c.type = mj.mjtCamera.mjCAMERA_FREE
-            c.lookat[:] = data.xpos[mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "palm")]
-            c.azimuth, c.elevation, c.distance = cam["azimuth"], cam["elevation"], cam["distance"]
+            c.lookat[:] = base.lookat
+            c.distance = base.distance * view["zoom"]
+            c.azimuth, c.elevation = view["azimuth"], view["elevation"]
             r.update_scene(data, camera=c, scene_option=opt)
             path = OUT / f"{name}.png"
             Image.fromarray(r.render()).save(path)
