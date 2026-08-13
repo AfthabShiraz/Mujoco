@@ -162,6 +162,25 @@ def cube_geom_names(model: mj.MjModel) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+def _resolve_encoder(name: str):
+    """Pick the encoder implementation. All three must be numerically equivalent;
+    `tests/test_triton_kernel.py` is what guarantees that, not this function."""
+    from encoders.taxel_torch import encode_taxels
+
+    if name == "torch":
+        return encode_taxels
+    if name == "compile":
+        # one-line fusion win: removes DRAM round trips, changes no arithmetic
+        import torch
+        return torch.compile(encode_taxels, dynamic=False)
+    if name == "triton":
+        import sys
+        sys.path.insert(0, str(ROOT / "src" / "kernels" / "triton"))
+        from taxel_triton import encode_taxels_triton
+        return encode_taxels_triton
+    raise ValueError(f"unknown encoder {name!r}")
+
+
 # The splat path
 # --------------------------------------------------------------------------- #
 
@@ -191,7 +210,7 @@ class SplatEncoder:
     would be a correctness bug wearing a performance disguise.
     """
 
-    def __init__(self, mjm: mj.MjModel, m, d, nworld: int):
+    def __init__(self, mjm: mj.MjModel, m, d, nworld: int, encoder: str = "torch"):
         import torch
         import warp as wp
 
@@ -214,6 +233,7 @@ class SplatEncoder:
         # one bogus group and the encoder outputs zeros without erroring
         # (PROJECT_LOG §1.5d). This is the single easiest way to get a fast
         # wrong answer here.
+        self._encode_fn = _resolve_encoder(encoder)
         self.static = prepare_static(mjm, remap_layout(build_layout()), cube_geom_names(mjm))
 
         self.site_ids = torch.as_tensor(self.static.site_ids, dtype=torch.long, device=dev)
@@ -327,7 +347,7 @@ class SplatEncoder:
 
     def encode(self):
         """One full tactile readout: (B, 368, 3) taxel forces, on the GPU."""
-        from encoders.taxel_torch import encode_taxels
+        encode_taxels = self._encode_fn
 
         # `to_world_frame=False` gives the wrench in the CONTACT frame, which is
         # what `mj_contactForce` returns and what the reference encoder consumes
@@ -504,6 +524,10 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--warmup", type=int, default=30)
     ap.add_argument("--scene", type=pathlib.Path, default=DEFAULT_SCENE)
+    ap.add_argument("--encoder", choices=["torch", "compile", "triton"],
+                    default="torch",
+                    help="splat backend; all three are numerically equivalent "
+                         "(see tests/test_triton_kernel.py)")
     ap.add_argument("--tactile", choices=["none", "splat"], default="none",
                     help="representation under test: 'none' is the H1 control")
     ap.add_argument("--verify", action="store_true",
@@ -545,7 +569,7 @@ def main() -> int:
         # not finished writing. Put Warp on torch's stream and the ordering is
         # the stream's problem, not ours.
         wp.set_stream(wp.stream_from_torch(torch.cuda.current_stream()), wp.get_device())
-        enc = _attach_mjw(SplatEncoder(mjm, m, d, n), mjw)
+        enc = _attach_mjw(SplatEncoder(mjm, m, d, n, encoder=args.encoder), mjw)
         torch.cuda.reset_peak_memory_stats()
 
     # ---- close the hand so contacts exist ----------------------------------

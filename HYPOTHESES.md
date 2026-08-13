@@ -224,6 +224,32 @@ modelled-bytes ÷ measured-time, not counter reads (`ncu` still blocked), so the
 almost certainly reflect L2 reuse being charged as DRAM traffic rather than the
 wall being approached. **89.6% at N=4096 is the defensible figure.**
 
+**END-TO-END SWEEP, MEASURED (2026-08-13)** — `scale_sweep_splat_triton.csv`,
+same scene and settings, kernel wired into the harness behind `--encoder triton`
+(correctness re-gated in-harness at 1.49e-07):
+
+| N | no touch | torch splat | **Triton splat** | cost of touch | vs torch |
+|---|---|---|---|---|---|
+| 64 | 16,055 | 11,259 | 13,939 | 1.15× | 1.24× |
+| 256 | 40,289 | 17,723 | 33,301 | 1.21× | 1.88× |
+| 1024 | 78,550 | 25,555 | 76,349 | **1.03×** | 2.99× |
+| 4096 | 129,682 | 28,177 | **119,681** | **1.08×** | **4.25×** |
+
+**The cost of tactile sensing at 4096 envs falls from 4.60× to 1.08×** — from a
+360% penalty to 8%. End-to-end gain 4.25× against the 4.37× Amdahl cap, i.e.
+**97% of everything that was available**. The encoder's share of step time drops
+from 77.1% to 6.5%.
+
+⚠ **The bottleneck has migrated again — inside the tactile stage.** The harness
+reports 2.393 ms for the encoder stage at N=4096, but the kernel alone measures
+0.582 ms. The remaining ~1.8 ms is in the stage's *pre-processing*: fetching
+contact forces from Warp (`mjw.contact_force`) and scattering the flat contact
+array into the padded per-env `(B, C, ·)` layout. **Pre-processing is now ~75% of
+the tactile stage.** This is the project's own thesis recurring one level down,
+and it is the natural next profiling target — ahead of physics, and much cheaper
+to attack. Not yet separately instrumented; the split above is inferred from the
+two measurements and should be measured directly before being quoted.
+
 ⚠ **Amdahl is now the entire story.** At 188×, end-to-end reaches ~4.35× against
 the 4.37× cap — versus 3.93× for a hypothetical 30× kernel. **The remaining 10%
 of end-to-end throughput lives entirely in the physics step.** Further tuning of
