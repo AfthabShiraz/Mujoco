@@ -23,6 +23,12 @@ them, and so nothing here is silently revised later.
 | D6 | **Task, reward, RL algorithm inherited unmodified.** The observation space is the only thing that changes, plus whatever the profiler forces. | Preserves comparability with the supervisor's baseline. |
 | D7 | **Ceiling on env count is the DGX Spark's unified memory**, not a chosen number. The sweep runs to whatever N fits under a memory cap; 4096 is not assumed reachable. | See `PROJECT_LOG.md` §1.1. |
 
+> **D7 REVISED, 2026-08-13, same day.** Measured: **4096 envs of bare physics use 0.92 GB and run at 129,682 env-steps/s.** Memory is nowhere near binding — the earlier assumption that 4096 was out of reach on the Spark was wrong *for physics*. The sweep completed all 13 rungs with zero failures.
+>
+> This does **not** retract §1.1: the host crash was real. But it was not caused by physics memory at 4096. Plausible causes, none yet confirmed: the full mjlab/RSL-RL training loop (policy, optimiser, rollout buffers, WandB) rather than the sim; or the same `njmax` scaling mistake made in the first harness (below), which inflates per-world constraint memory and compute by a factor of N.
+>
+> **Revised stance:** keep the memory cap and subprocess isolation — they cost nothing and they caught this safely — but do not scope the project around an assumed low ceiling. Re-measure the ceiling with the *training loop* attached before concluding anything about 4096-env training.
+
 ---
 
 ## H1 — Physics dominates when tactile is off
@@ -34,7 +40,33 @@ linearly in N until the GPU saturates.
 *Reproduces the supervisor's existing regime. This is the control — if it fails,
 the harness is wrong, not the system.*
 
-**Resolution:** _unresolved_
+**Resolution (2026-08-13): scaling half CONFIRMED; dominance half still open.**
+
+`benchmarks/results/scale_sweep_physics_only.csv`, MuJoCo Warp, cube-reorient
+scene, hand closed to 60% so ~4.3 contacts/env are live, zero contact overflow
+at every N:
+
+| N | env-steps/s | µs/env-step | ms/step | peak GB |
+|---|---|---|---|---|
+| 1 | 268 | 3731.5 | 3.73 | 0.82 |
+| 16 | 4,051 | 246.8 | 3.95 | 0.82 |
+| 128 | 32,164 | 31.1 | 3.98 | 0.82 |
+| 256 | 40,289 | 24.8 | 6.35 | 0.82 |
+| 1024 | 78,550 | 12.7 | 13.04 | 0.82 |
+| 4096 | **129,682** | **7.7** | 31.58 | **0.92** |
+
+Scaling is **perfectly linear to N=128** — `ms/step` is flat at ~3.95 ms while
+throughput doubles at every rung, i.e. 128 environments cost the same wall-clock
+as one. Past N=128 the GPU saturates and `ms/step` starts climbing, but
+throughput still improves sublinearly out to 4096. Per-env cost falls 484× from
+N=1 to N=4096.
+
+**GPU saturation point: N ≈ 128–256** on this hardware, for this scene.
+
+The *dominance* claim (physics is the majority of step time) is not yet tested —
+that needs the per-stage breakdown, which needs an encoder to compare against.
+
+⚠ **D7 is refuted for physics-only** — see the decision table above.
 
 ---
 
