@@ -114,6 +114,22 @@ Read in full. `VirtualTaxelSensor.update()` is the algorithm every later impleme
 
 `leapxela/taxel_layout.py`: `N_TAXELS = 368`, `PACK_SHAPE = (26, 31)`. Flat taxel order **equals hardware XELA IDs 0..367**, so sim datasets are index-compatible with real hardware streams. 18 patches (11× 4×4 finger, 3× 4×6 palm, 4 fingertip).
 
+### 1.5b ⚠ The GPU stack's hand model has no taxels in it (found 2026-08-13, on first clone)
+
+Not mentioned anywhere in the plan doc, and it is the **first real engineering task**.
+
+**Three separate problems, stacked:**
+
+1. **mjlab loads a model with zero taxel sites.** `robots/leap_xela.py:get_hand_xml()` loads `leapXela_generated_mjx_{Box,CoACD}.xml`. That file has **71 sites, none of them taxels** — on both the pinned version *and* current `main`.
+2. **The taxel sites don't exist in any static XML.** They are injected **at runtime** by `leapxela/scene_builder.py:build_scene_xml()`, which parses a *different* base model (`leapxela/leapXela_pointcloud/robot.xml`) with ElementTree and adds one `<site>` per taxel (name, pos, quat, `size=0.0012`, `group=4`). Hence the error string in `touch_sensor.py`: *"Scene model is missing taxel sites; build it with build_scene_xml"*.
+3. **mjlab pins an old model.** `third_party/leapXelaMjLab` pins `leapXELA_model` at **`4e8003f` (2026-06-11)** — **13 commits behind `main`**, and *predating the `leapxela` package entirely* (added 2026-08-03 in PR #6). The pinned tree has no `leapxela/` directory at all.
+
+**So the CPU tactile toolkit and the GPU training stack use different hand models, and the GPU one has never had taxels in it.**
+
+**Consequence:** before any encoder work, the 368 taxel sites must exist in the model mjlab loads. That is model plumbing, not kernel work, and it is Phase 0/1. Options to weigh: (a) bump the submodule to current `main` and port `build_scene_xml`'s site injection into the mjlab spec pipeline (mjlab uses `MjSpec`, which is *newer and nicer* than the ElementTree hack `scene_builder.py` had to use for MuJoCo 3.1.1 — this may be genuinely cleaner); (b) generate a static taxel-site XML once and load that. Bumping the submodule is not free — 13 commits including flex work and a timestep change.
+
+**Also worth noting:** `robot_touch_sensor_array_mjx_generated_model.xml` has **429 sites and 421 `<touch>` sensors**, but zero sites named "taxel" — that's the *native touch sensor* model, a different representation with a different naming scheme. Don't confuse the two.
+
 ### 1.6 Plan-doc accuracy audit (2026-08-13) — every claim checked against source
 
 `project2_parallel_rl_sim_pipeline.md` was audited claim-by-claim and **patched**. It held up unusually well.
@@ -206,7 +222,8 @@ Ranked by value-to-Hamid per unit effort:
 ## 5. Next actions
 
 1. Write the cgroup-capped memory-ramp harness (N = 16…512, peak RSS + env-steps/sec). **Not yet written.**
-2. Clone `leapXelaMjLab` + `leapXELA_model` with submodules into `third_party/` (mind the SSH submodule URL, §1.3).
+2. ~~Clone the repos into `third_party/`~~ — **DONE 2026-08-13.** Both forked to `AfthabShiraz/`, added as submodules pointing at the forks, `upstream` remotes wired, global `insteadOf` rewrite set so the SSH submodule URL resolves.
+2b. **Resolve the missing-taxel-sites problem (§1.5b) — this now precedes all encoder work.**
 3. Phase 0 proper: CPU tactile reproduction (`reading_contact.py`, `grasp_touch_test.py`), oracle fixtures, `HYPOTHESES.md` written and dated **before** measuring.
 4. Email Hamid — §3, leading with Q1 and Q7.
 5. Re-scope §4's sweep range once (1) gives a number.
