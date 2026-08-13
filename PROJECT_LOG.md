@@ -156,7 +156,32 @@ So the 13-line site injection **cannot be ported as-is** — `bodies[e.body]` ra
 
 **The mapping is semantically obvious but geometrically unproven.** `leap_hand_xela_back_cover`→`palm`, `finger`→`if_ds`, `p2_unified`→`if_md`, and so on — 12 layout bodies onto palm + 4 fingers × 3 links. **But `TaxelEntry.pos/quat` are expressed in *Lineage B* body frames.** A correct name map is not sufficient: if the two exports place link frame origins or axes differently, every taxel lands in the wrong place, and the encoder will produce numbers that look plausible and are wrong. Two independent CAD exports have no reason to agree.
 
-**Recommended approach:** (i) ask Hamid — he built both lineages and may already know they correspond, or have the transform; (ii) derive the name map and **validate geometrically** — render the injected sites and confirm they sit on the skin, and check each site's distance to the nearest mesh surface numerically; (iii) only then port the injection. Do **not** skip (ii).
+**RESOLVED 2026-08-13 — see `explore/02_map_bodies.py`.** Both lineages are structurally identical (palm + 4 chains × 4 links), so the map is derivable from the kinematic tree, disambiguated by the layout's own `PATCH_TO_HARDWARE` names.
+
+**⚠ Chain order is reversed from what the names suggest: `finger` is the RING finger, not the index.** Mapping by name order — the obvious guess — puts every index taxel on the ring finger and every ring taxel on the index. Plausible numbers, silently wrong. The map is:
+
+```python
+BODY_MAP = {
+    "leap_hand_xela_back_cover": "palm",
+    "p3_unified": "rf_px",   "p2_unified": "rf_md",   "finger": "rf_ds",     # RING
+    "p3_unified_2": "mf_px", "p2_unified_2": "mf_md", "finger_2": "mf_ds",   # MIDDLE
+    "p3_unified_3": "if_px", "p2_unified_3": "if_md", "finger_3": "if_ds",   # INDEX
+    "thp1_unified": "th_px", "thumb": "th_ds",                               # THUMB
+}
+```
+
+**Frame agreement, measured by body-local mesh bounding box** (*not* centroid — the RL meshes are decimated, so vertex density shifts the centroid and gives false positives; this cost one wrong intermediate result):
+
+| Bodies | Taxels | Result |
+|---|---|---|
+| palm + all 8 px/md links | **232** | **bbox identical to 0.000 mm — taxels transfer unchanged** |
+| `if_ds`, `mf_ds`, `rf_ds`, `th_ds` | **136** | **frame origin agrees, but the RL fingertip is a physically different, larger part** |
+
+Fingertip detail (`finger_3`→`if_ds`): faces at `min_x`, `max_y`, `min_z` align **exactly**, so the mounting frame is shared; the RL tip extends **+10.33 mm** in −y, +4.85 mm in +x, +4.6 mm in +z. Tactile tip `30 × 61.98 × 34.6 mm` vs RL tip `34.85 × 72.31 × 39.2 mm`. Identical across **all three** RL variants (`Box`, plain, `CoACD`) — so this is not a fingertip-variant choice, the two lineages genuinely carry different tip designs.
+
+**Consequence:** 232 of 368 taxels can be injected today with no transform. The 136 fingertip taxels would sit *inside* the RL tip rather than on its surface, so they need either a matching tip model or re-projection onto the RL tip surface. **This is now a precise question for Hamid** rather than an open-ended one: *"the tactile lineage's fingertip is 10 mm shorter than the mjx one — which is the real robot, and is there a tip variant that matches the XELA-sensorised tip?"*
+
+**Original recommendation, retained for context:** (i) ask Hamid — he built both lineages and may already know they correspond, or have the transform; (ii) derive the name map and **validate geometrically** — render the injected sites and confirm they sit on the skin, and check each site's distance to the nearest mesh surface numerically; (iii) only then port the injection. Do **not** skip (ii).
 
 Rejected alternatives: making mjlab load Lineage B (large change; `robot.xml` needs the compatibility fixups `scene_builder.py` applies), and regenerating Lineage A with taxels (needs taxel positions in Lineage A geometry — same unsolved problem).
 
