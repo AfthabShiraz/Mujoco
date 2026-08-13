@@ -100,9 +100,9 @@ scene and settings, ~4.3 live contacts/env, zero contact overflow at every N:
 physics; by N=4096 it is 77% of step time and touch costs a **4.6× throughput
 penalty**.
 
-Mechanism: physics scales sublinearly (33× more time for 4096× the work,
-N=1→4096), while the naive encoder scales close to linearly (0.60 → 112.26 ms,
-187×). It is a dense `B × C × T` formulation — every env × 48 contacts × 368
+Mechanism: physics scales sublinearly — **8.9×** more time for **4096×** the work
+(3.75 → 33.33 ms, N=1→4096) — while the naive encoder scales close to linearly
+(0.60 → 112.26 ms, **187×**). It is a dense `B × C × T` formulation — every env × 48 contacts × 368
 taxels — so its work grows in proportion to N with no reuse. Physics amortises;
 the encoder does not.
 
