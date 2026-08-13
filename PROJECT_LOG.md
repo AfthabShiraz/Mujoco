@@ -30,6 +30,21 @@ systemd-run --user --scope -p MemoryMax=90G -p MemorySwapMax=0 \
 ```
 Run inside `tmux` so a dropped SSH doesn't kill the job. Ramp N and record peak RSS rather than jumping to the top of the range.
 
+### 1.1b Headless rendering — solved, use EGL
+
+Work is over SSH with no display (`DISPLAY` unset, no Wayland). **Interactive viewers do not work** — `mujoco.viewer.launch_passive()` will fail, so `reading_contact.py` needs adapting before it runs here.
+
+**Offscreen rendering does work and is GPU-accelerated.** `libEGL_nvidia.so.580.173.02` + `10_nvidia.json` are installed; verified 2026-08-13 by rendering a test scene (120×160, 191 distinct colours — real output, not a blank buffer).
+
+```python
+import os; os.environ["MUJOCO_GL"] = "egl"   # MUST precede `import mujoco`
+import mujoco
+with mujoco.Renderer(model, height=480, width=640) as r:
+    r.update_scene(data); frame = r.render()   # (H, W, 3) uint8
+```
+
+View saved PNG/MP4 inline through VS Code Remote SSH. `grasp_touch_test.py` already writes npz + PNG heatmaps + MP4, so it suits this workflow as-is. **Missing from the venv:** pillow / imageio / matplotlib — nothing can write an image file yet.
+
 ### 1.2 Local state
 
 - Repo `/home/afthabshiraz/Mujoco`, branch `main`, **zero commits**. Untracked: the plan doc, `.venv/`, this log.
