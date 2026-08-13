@@ -190,8 +190,44 @@ reduces over the taxel axis, so scatter cannot be one-pass either — and having
 paid the two-pass cost it buys no traffic reduction while adding
 non-determinism.
 
-*Unresolved:* the determinism claim. Atomics never entered the design space, and
-the current harness is already deterministic (it sorts), so nothing measured it.
+*Determinism — now MEASURED (2026-08-13, `tests/test_triton_kernel.py`):*
+**20/20 runs bit-identical** at B=1024 via `torch.equal` over 1,130,496 floats.
+The gather design delivers what it promised. Previously recorded as unmeasured.
+
+**BUILT AND MEASURED — `src/kernels/triton/taxel_triton.py`:**
+
+| N | eager | torch.compile | **Triton** | vs eager | vs compile | GB/s | % of ceiling |
+|---|---|---|---|---|---|---|---|
+| 128 | 2.887 | 1.282 | **0.038** | 74.9× | 33.3× | 110.3 | 42.3% |
+| 1024 | 27.340 | 11.196 | **0.132** | 207.5× | 85.0× | 258.1 | 99.0% |
+| 4096 | 109.525 | 45.536 | **0.582** | 188.2× | 78.3× | 233.8 | 89.6% |
+
+Traffic 19.99 GB → **136 MB** at N=4096, against the 103.8 MB compulsory floor
+(1.31× the floor). Peak torch allocation 4.095 → 0.183 GB (22×). Correctness
+gated timing: 1.94e-06 max abs vs the oracle, 1.34e-07 vs the real Warp contact
+stream at N=64, no NaNs.
+
+This **exceeds the 20–40× projection** — the discounts it assumed (register
+spills, load imbalance, 48-SM tail) did not materialise. Cross-checked: wall-clock
+over 100 calls 0.573 ms vs event-timed 0.582 ms.
+
+⚠ **New caveat — runtime is now data-dependent.** The dense baseline's cost was
+independent of contact count; the sparse kernel's is not. At N=4096: **0.54 ms at
+1 live contact/env, 0.57 at the real 4.3, 0.73 at 12, 1.27 ms with all 48 slots
+live.** The worst case is still 86× eager / 36× `torch.compile`, but the headline
+figure is tied to the ~4.3 contacts/env this scene produces. A harder grasp would
+cost more, and the profiling report's "synthetic == real to 1.0006" result no
+longer transfers.
+
+⚠ **Read the 96–99% GB/s figures at N=512–2048 with suspicion.** They are
+modelled-bytes ÷ measured-time, not counter reads (`ncu` still blocked), so they
+almost certainly reflect L2 reuse being charged as DRAM traffic rather than the
+wall being approached. **89.6% at N=4096 is the defensible figure.**
+
+⚠ **Amdahl is now the entire story.** At 188×, end-to-end reaches ~4.35× against
+the 4.37× cap — versus 3.93× for a hypothetical 30× kernel. **The remaining 10%
+of end-to-end throughput lives entirely in the physics step.** Further tuning of
+this kernel is not worth the days; the honest next profiling target is physics.
 
 *Honest caveat on recompute-vs-store:* in a fully body-sparse layout the stored
 weight buffer is only ~2 MB, so store's bandwidth penalty largely evaporates.
