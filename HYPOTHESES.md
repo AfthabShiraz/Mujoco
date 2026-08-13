@@ -165,4 +165,60 @@ accumulate in registers) is faster *and* removes run-to-run non-determinism. The
 determinism will turn out to matter more than the speed for validating against
 the oracle.
 
-**Resolution:** _unresolved_
+**Resolution (2026-08-13): conclusion SUPPORTED, stated mechanism REFUTED,
+determinism half UNRESOLVED.** See `profiling/RESULTS.md`.
+
+The recommended design (two-pass gather, recomputing weights) survives — but not
+for the reason H6 gives.
+
+*Refuted:* **atomics never appear in the profile.** The encoder is not slow
+because a scatter contends for taxel slots; contention was never the cost. It is
+slow because it writes **19.99 GB per call** at N=4096, of which 99.3% is
+multiplied by zero *after* being written to DRAM. Measured 3.92 live contacts/env
+against a 48-slot budget, then the body mask keeps 1/12 of taxels: 72.4M
+(env, contact, taxel) triples computed, ~492k carry signal.
+
+*Confirmed:* bandwidth is the limiter, so trading FLOPs for traffic is right.
+Arithmetic intensity **0.192 FLOP/byte** against a measured ridge point of
+**70.7 FLOP/byte** — 368× to the left. Running at 183.9 GB/s (71% of the measured
+260.8 GB/s ceiling) and 0.19% of compute peak. Launch overhead is 0.18% of the
+call (58 launches × 3.34 µs), so **any design justified on "fewer kernel
+launches" is justified on the wrong grounds.**
+
+*Also refuted:* the one-pass scatter alternative, twice over. `weights /= sum`
+reduces over the taxel axis, so scatter cannot be one-pass either — and having
+paid the two-pass cost it buys no traffic reduction while adding
+non-determinism.
+
+*Unresolved:* the determinism claim. Atomics never entered the design space, and
+the current harness is already deterministic (it sorts), so nothing measured it.
+
+*Honest caveat on recompute-vs-store:* in a fully body-sparse layout the stored
+weight buffer is only ~2 MB, so store's bandwidth penalty largely evaporates.
+Recompute then wins on simplicity and footprint rather than on traffic.
+
+**Decisive experiment:** `torch.compile` on the unmodified encoder changes zero
+FLOPs, zero algorithm and zero occupancy strategy — it removes only DRAM round
+trips — and yields **2.41× at N=4096** (independently re-run), numerically
+identical at 4.8e-07. Traffic is the limiter.
+
+**Actionable side finding:** that 2.41× is available today from a one-line
+change, worth ~1.82× end-to-end.
+
+**Projected kernel speedup: 20–40×** (traffic floor 103.8 MB → 0.43 ms;
+realistic landing 1–3 ms).
+
+⚠ **Amdahl reality check, decide before tuning:** cap is 4.37×. A 20× kernel
+gives 3.74×, 30× gives 3.93×, 100× gives 4.23×. **Going 30× → 100× buys 7.6%
+more end-to-end throughput for 3.3× more kernel work.** The headline saturates
+at 20–30×; past that the honest next target is physics, not the encoder.
+
+⚠ **Tooling limitation:** `ncu` returns `ERR_NVGPUCTRPERM` on every section —
+the driver sets `NVreg_RestrictProfilingToAdminUsers=1` and there is no
+passwordless root. **There is no Nsight-reported limiter and no Nsight-measured
+DRAM throughput in this analysis.** Substituted: an empirically measured
+saturating-copy ceiling (260.8 GB/s read, 240.7 copy, 237.6 triad), an SGEMM
+compute ceiling (18.44 TFLOP/s, TF32 off), and `modelled bytes ÷ measured kernel
+time` for every achieved-GB/s figure. The fusion experiment exists precisely
+because it tests the same conclusion without counters. `nsys` works and confirms
+the kernel-level picture.

@@ -1,0 +1,12 @@
+{
+  "num_envs": 4096,
+  "eager_ms": 109.43097686767578,
+  "fused_ms": 45.41731262207031,
+  "speedup": 2.409455129551156,
+  "max_abs_err_vs_eager": 4.76837158203125e-07,
+  "fused_kernel_launches": 34,
+  "eager_modelled_bytes": 19994446720,
+  "implied_fused_GBps": 440.2384369674,
+  "floor_bytes": 103809024,
+  "floor_ms_at_240GBps": 0.4325376
+}

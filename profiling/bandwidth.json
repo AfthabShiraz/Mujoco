@@ -1,0 +1,21 @@
+{
+  "bandwidth": {
+    "copy_GBps": 240.74895293604354,
+    "read_GBps": 260.8093158843652,
+    "triad_GBps": 237.6096572395143,
+    "buffer_MB": 1024,
+    "ceiling_GBps": 260.8093158843652
+  },
+  "compute": {
+    "sgemm_TFLOPs": 18.43717963190319,
+    "theoretical_fp32_TFLOPs": 29.712384,
+    "gemm_n": 8192
+  },
+  "launch": {
+    "pipelined_launch_us": 3.3383519649505615,
+    "serialised_launch_us": 6.846184996902593
+  },
+  "ridge_point_flop_per_byte": 70.69218202342768,
+  "device": "NVIDIA GB10",
+  "sm_count": 48
+}

@@ -1,0 +1,359 @@
+{
+  "num_envs": 1024,
+  "C": 48,
+  "T": 368,
+  "device": "NVIDIA GB10",
+  "timing": {
+    "ms_median": 27.160287857055664,
+    "ms_min": 26.463552474975586,
+    "ms_max": 27.916576385498047,
+    "ms_mean": 27.209079933166503,
+    "iters": 20
+  },
+  "torch_peak_gb": 1.0392332077026367,
+  "profiler_device_ms_per_call": 27.360060799999978,
+  "aten_ops_per_call": 33.0,
+  "kernel_launches_per_call": 37.0,
+  "unmodelled_ms_per_call": 0.005715199999991455,
+  "rows": [
+    {
+      "op": "aten::bmm",
+      "shapes": "[[376832, 48, 3], [376832, 3, 3]]",
+      "label": "einsum(local): batched 3x3 gemm",
+      "calls_per_encode": 1.0,
+      "us_per_call": 6312.925599999995,
+      "bytes": 447676416,
+      "flops": 271319040,
+      "achieved_GBps": 70.91425503256372,
+      "note": "B*T batches of a 48x3x3 gemm -- K=3"
+    },
+    {
+      "op": "aten::pow",
+      "shapes": "[[1024, 48, 368], []]",
+      "label": "local[...,i]**2 (x2)",
+      "calls_per_encode": 2.0,
+      "us_per_call": 2361.190599999997,
+      "bytes": 578813952,
+      "flops": 36175872,
+      "achieved_GBps": 245.13647987587308,
+      "note": "stride-3 read: sector waste, charged full tensor"
+    },
+    {
+      "op": "aten::mul",
+      "shapes": "[[1024, 48, 368, 1], [1024, 48, 368, 3]]",
+      "label": "weights * force_local",
+      "calls_per_encode": 1.0,
+      "us_per_call": 2358.3873999999983,
+      "bytes": 506462208,
+      "flops": 54263808,
+      "achieved_GBps": 214.74936984483566,
+      "note": ""
+    },
+    {
+      "op": "aten::where",
+      "shapes": "[[1024, 48, 368], [1024, 48, 368], [1024, 48, 368]]",
+      "label": "where(gate, 0, w) (x2)",
+      "calls_per_encode": 2.0,
+      "us_per_call": 2041.1697999999953,
+      "bytes": 470286336,
+      "flops": 0,
+      "achieved_GBps": 230.40039883012236,
+      "note": ""
+    },
+    {
+      "op": "aten::copy_",
+      "shapes": "[[1024, 368, 48, 3, 1], [1024, 368, 48, 3, 1], []]",
+      "label": "einsum(local): transpose rel to (B,T,C,3)",
+      "calls_per_encode": 1.0,
+      "us_per_call": 2027.3847999999998,
+      "bytes": 434110464,
+      "flops": 0,
+      "achieved_GBps": 214.12336917984194,
+      "note": "pure data movement, no arithmetic"
+    },
+    {
+      "op": "aten::sum",
+      "shapes": "[[1024, 48, 368, 3], [], [], []]",
+      "label": "sum over contacts",
+      "calls_per_encode": 1.0,
+      "us_per_call": 1796.503600000005,
+      "bytes": 221577216,
+      "flops": 54263808,
+      "achieved_GBps": 123.33803060567169,
+      "note": "reduction over a non-innermost axis"
+    },
+    {
+      "op": "aten::abs",
+      "shapes": "[[1024, 48, 368], [0]]",
+      "label": "abs(local[...,2])",
+      "calls_per_encode": 1.0,
+      "us_per_call": 1235.4018000000003,
+      "bytes": 289406976,
+      "flops": 18087936,
+      "achieved_GBps": 234.26141681192297,
+      "note": "stride-3 read: sector waste"
+    },
+    {
+      "op": "aten::sub",
+      "shapes": "[[1024, 48, 1, 3], [1024, 1, 368, 3], []]",
+      "label": "rel = broadcast sub",
+      "calls_per_encode": 1.0,
+      "us_per_call": 1156.4893999999977,
+      "bytes": 222167040,
+      "flops": 54263808,
+      "achieved_GBps": 192.10469201014763,
+      "note": "materialises 3n floats from 3(BC+BT): zero reuse"
+    },
+    {
+      "op": "aten::bmm",
+      "shapes": "[[1024, 48, 3], [1024, 3, 1104]]",
+      "label": "einsum(force_local): gemm",
+      "calls_per_encode": 1.0,
+      "us_per_call": 1152.3037999999972,
+      "bytes": 231211008,
+      "flops": 271319040,
+      "achieved_GBps": 200.65108524331916,
+      "note": "expands (B,C,3) + (B,T,9) into 3n floats"
+    },
+    {
+      "op": "aten::mul",
+      "shapes": "[[1024, 48, 368], [1024, 48, 368]]",
+      "label": "weights *= keep",
+      "calls_per_encode": 1.0,
+      "us_per_call": 983.1452000000012,
+      "bytes": 217055232,
+      "flops": 18087936,
+      "achieved_GBps": 220.776373622126,
+      "note": ""
+    },
+    {
+      "op": "aten::add",
+      "shapes": "[[1024, 48, 368], [1024, 48, 368], []]",
+      "label": "dist_sq = x^2 + y^2",
+      "calls_per_encode": 1.0,
+      "us_per_call": 898.1078000000012,
+      "bytes": 217055232,
+      "flops": 18087936,
+      "achieved_GBps": 241.68060003487298,
+      "note": ""
+    },
+    {
+      "op": "aten::gt",
+      "shapes": "[[1024, 48, 368], []]",
+      "label": "cutoff compares (x2)",
+      "calls_per_encode": 2.0,
+      "us_per_call": 754.747799999998,
+      "bytes": 180879360,
+      "flops": 36175872,
+      "achieved_GBps": 239.65536567314334,
+      "note": ""
+    },
+    {
+      "op": "aten::fill_",
+      "shapes": "[[1024, 48, 368], []]",
+      "label": "zeros_like for where (x2)",
+      "calls_per_encode": 2.0,
+      "us_per_call": 677.9280000000024,
+      "bytes": 144703488,
+      "flops": 0,
+      "achieved_GBps": 213.4496406698049,
+      "note": "an entire 4n-byte buffer of zeros, written then read, twice"
+    },
+    {
+      "op": "aten::neg",
+      "shapes": "[[1024, 48, 368]]",
+      "label": "-dist_sq",
+      "calls_per_encode": 1.0,
+      "us_per_call": 599.547600000001,
+      "bytes": 144703488,
+      "flops": 18087936,
+      "achieved_GBps": 241.35446126379247,
+      "note": ""
+    },
+    {
+      "op": "aten::exp",
+      "shapes": "[[1024, 48, 368]]",
+      "label": "exp",
+      "calls_per_encode": 1.0,
+      "us_per_call": 596.6096000000005,
+      "bytes": 144703488,
+      "flops": 18087936,
+      "achieved_GBps": 242.54300970014543,
+      "note": ""
+    },
+    {
+      "op": "aten::div",
+      "shapes": "[[1024, 48, 368], []]",
+      "label": "/(2 sigma^2)",
+      "calls_per_encode": 1.0,
+      "us_per_call": 596.4493999999992,
+      "bytes": 144703488,
+      "flops": 18087936,
+      "achieved_GBps": 242.60815418709484,
+      "note": ""
+    },
+    {
+      "op": "aten::div",
+      "shapes": "[[1024, 48, 368], [1024, 48, 1]]",
+      "label": "weights /= denom",
+      "calls_per_encode": 1.0,
+      "us_per_call": 547.9757999999987,
+      "bytes": 144900096,
+      "flops": 18087936,
+      "achieved_GBps": 264.42791086759735,
+      "note": ""
+    },
+    {
+      "op": "aten::copy_",
+      "shapes": "[[1024, 48, 368], [1024, 48, 368], []]",
+      "label": "keep.to(float32)",
+      "calls_per_encode": 1.0,
+      "us_per_call": 391.29059999999953,
+      "bytes": 90439680,
+      "flops": 0,
+      "achieved_GBps": 231.13174709538157,
+      "note": ""
+    },
+    {
+      "op": "aten::sum",
+      "shapes": "[[1024, 48, 368], [], [], []]",
+      "label": "weight_sum over taxels",
+      "calls_per_encode": 1.0,
+      "us_per_call": 324.32740000000047,
+      "bytes": 72548352,
+      "flops": 18087936,
+      "achieved_GBps": 223.688630686152,
+      "note": ""
+    },
+    {
+      "op": "aten::bitwise_and",
+      "shapes": "[[1024, 48, 368], [1024, 48, 1]]",
+      "label": "keep = mask & valid",
+      "calls_per_encode": 1.0,
+      "us_per_call": 175.05979999999983,
+      "bytes": 36225024,
+      "flops": 18087936,
+      "achieved_GBps": 206.92942640172123,
+      "note": ""
+    },
+    {
+      "op": "aten::bmm",
+      "shapes": "[[49152, 3, 3], [49152, 3, 1]]",
+      "label": "einsum: force_world",
+      "calls_per_encode": 1.0,
+      "us_per_call": 125.23539999999734,
+      "bytes": 2949120,
+      "flops": 737280,
+      "achieved_GBps": 23.54861325152523,
+      "note": ""
+    },
+    {
+      "op": "aten::copy_",
+      "shapes": "[[1024, 3, 368, 3, 1], [1024, 3, 368, 3, 1], []]",
+      "label": "einsum(force_local): transpose site_mat",
+      "calls_per_encode": 1.0,
+      "us_per_call": 113.52379999999975,
+      "bytes": 27131904,
+      "flops": 0,
+      "achieved_GBps": 238.9974965601932,
+      "note": ""
+    },
+    {
+      "op": "aten::eq",
+      "shapes": "[[1024, 48, 1], [1, 1, 368]]",
+      "label": "body_mask",
+      "calls_per_encode": 1.0,
+      "us_per_call": 108.00679999999993,
+      "bytes": 18484096,
+      "flops": 18087936,
+      "achieved_GBps": 171.13826166500638,
+      "note": ""
+    },
+    {
+      "op": "aten::mul",
+      "shapes": "[[1024, 368, 3], [3]]",
+      "label": "out *= [1,1,-1]",
+      "calls_per_encode": 1.0,
+      "us_per_call": 17.427199999994627,
+      "bytes": 9043968,
+      "flops": 1130496,
+      "achieved_GBps": 518.9570326846991,
+      "note": ""
+    },
+    {
+      "op": "aten::mul",
+      "shapes": "[[1024, 48, 3], [1024, 48, 1]]",
+      "label": "force_world *= sign",
+      "calls_per_encode": 1.0,
+      "us_per_call": 3.2066000000012083,
+      "bytes": 1376256,
+      "flops": 147456,
+      "achieved_GBps": 429.1947857542198,
+      "note": ""
+    },
+    {
+      "op": "aten::gt",
+      "shapes": "[[1024, 48, 1], []]",
+      "label": "UNMODELLED",
+      "calls_per_encode": 1.0,
+      "us_per_call": 2.5087999999966994,
+      "bytes": null,
+      "flops": null,
+      "achieved_GBps": null,
+      "note": ""
+    },
+    {
+      "op": "aten::copy_",
+      "shapes": "[[3], [3], []]",
+      "label": "UNMODELLED",
+      "calls_per_encode": 1.0,
+      "us_per_call": 1.3951999999975668,
+      "bytes": null,
+      "flops": null,
+      "achieved_GBps": null,
+      "note": ""
+    },
+    {
+      "op": "aten::where",
+      "shapes": "[[1024, 48, 1], [1024, 48, 1], [1024, 48, 1]]",
+      "label": "UNMODELLED",
+      "calls_per_encode": 1.0,
+      "us_per_call": 1.0751999999949475,
+      "bytes": null,
+      "flops": null,
+      "achieved_GBps": null,
+      "note": ""
+    },
+    {
+      "op": "aten::fill_",
+      "shapes": "[[1024, 48, 1], []]",
+      "label": "UNMODELLED",
+      "calls_per_encode": 1.0,
+      "us_per_call": 0.736000000002241,
+      "bytes": null,
+      "flops": null,
+      "achieved_GBps": null,
+      "note": ""
+    }
+  ],
+  "modelled_totals": {
+    "read_bytes": 2804075392,
+    "write_bytes": 2194538496,
+    "total_bytes": 4998613888,
+    "flops": 960675840,
+    "arithmetic_intensity": 0.19218844694251366
+  },
+  "effective_GBps": 184.04127063408373,
+  "effective_TFLOPs": 0.0353706059764914,
+  "bandwidth": {
+    "copy_GBps": 241.67752050190506,
+    "read_GBps": 263.3058382048884,
+    "triad_GBps": 238.21276477263933,
+    "buffer_MB": 1024,
+    "ceiling_GBps": 263.3058382048884
+  },
+  "launch": {
+    "pipelined_launch_us": 4.2969279289245605,
+    "serialised_launch_us": 7.731699997748365
+  }
+}
