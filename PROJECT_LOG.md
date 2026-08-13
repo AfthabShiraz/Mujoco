@@ -141,6 +141,27 @@ Not mentioned anywhere in the plan doc, and it is the **first real engineering t
 
 **So the CPU tactile toolkit and the GPU training stack use different hand models, and the GPU one has never had taxels in it.**
 
+**4. The root cause — two independent model lineages (found 2026-08-13).** Verified by compiling both and diffing body names:
+
+| | **Lineage A — RL/GPU** | **Lineage B — tactile/CPU** |
+|---|---|---|
+| Source | `leapXela_base_model.xml` | `leapxela/leapXela_pointcloud/robot.xml` |
+| Generator | `simplify_model_for_mjx.py` → `leapXela_generated_mjx_{Box,CoACD}.xml` | from ROS `xela_description` |
+| Consumers | `leapXelaMjLab` (training) | `taxel_layout.py`, `touch_sensor.py`, `scene_builder.py` |
+| Body names | `palm`, `if_bs/px/md/ds`, `mf_*`, `rf_*`, `th_mp/bs/px/ds` | `leap_hand_xela_back_cover`, `finger{,_2,_3}`, `p2/p3/p4_unified*`, `thumb`, `thp*_unified` |
+
+**Body-name overlap between the layout's 12 required bodies and mjlab's model: 0 of 12. Against `robot.xml`: 12 of 12.**
+
+So the 13-line site injection **cannot be ported as-is** — `bodies[e.body]` raises `KeyError` on every entry. The taxel layout was authored against a hand model the GPU stack has never loaded.
+
+**The mapping is semantically obvious but geometrically unproven.** `leap_hand_xela_back_cover`→`palm`, `finger`→`if_ds`, `p2_unified`→`if_md`, and so on — 12 layout bodies onto palm + 4 fingers × 3 links. **But `TaxelEntry.pos/quat` are expressed in *Lineage B* body frames.** A correct name map is not sufficient: if the two exports place link frame origins or axes differently, every taxel lands in the wrong place, and the encoder will produce numbers that look plausible and are wrong. Two independent CAD exports have no reason to agree.
+
+**Recommended approach:** (i) ask Hamid — he built both lineages and may already know they correspond, or have the transform; (ii) derive the name map and **validate geometrically** — render the injected sites and confirm they sit on the skin, and check each site's distance to the nearest mesh surface numerically; (iii) only then port the injection. Do **not** skip (ii).
+
+Rejected alternatives: making mjlab load Lineage B (large change; `robot.xml` needs the compatibility fixups `scene_builder.py` applies), and regenerating Lineage A with taxels (needs taxel positions in Lineage A geometry — same unsolved problem).
+
+**This is a strong candidate for the first real contribution:** it blocks tactile-on-GPU entirely, it's tractable, and the artifact — a validated body map plus taxel sites in the mjx model — is reusable by Hamid, Pratik and `sparsh-skin-sim` alike.
+
 **Consequence:** before any encoder work, the 368 taxel sites must exist in the model mjlab loads. That is model plumbing, not kernel work, and it is Phase 0/1. Options to weigh: (a) bump the submodule to current `main` and port `build_scene_xml`'s site injection into the mjlab spec pipeline (mjlab uses `MjSpec`, which is *newer and nicer* than the ElementTree hack `scene_builder.py` had to use for MuJoCo 3.1.1 — this may be genuinely cleaner); (b) generate a static taxel-site XML once and load that. Bumping the submodule is not free — 13 commits including flex work and a timestep change.
 
 **Also worth noting:** `robot_touch_sensor_array_mjx_generated_model.xml` has **429 sites and 421 `<touch>` sensors**, but zero sites named "taxel" — that's the *native touch sensor* model, a different representation with a different naming scheme. Don't confuse the two.
