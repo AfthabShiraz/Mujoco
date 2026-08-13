@@ -4,6 +4,8 @@
 
 **Companion docs:** `project2_parallel_rl_sim_pipeline.md` is the *plan* (stable). This is the *state* (changes constantly). If the two disagree, this file is what actually happened.
 
+**How to work with Afthab (set 2026-08-13):** he is learning MuJoCo *while* building — understanding the system is an explicit goal, not a by-product. **Explain in short, friendly chunks and stop for questions.** No walls of text, no stacked tables, no six-section replies. One idea per turn, then pause and offer to go deeper. Introduce MuJoCo concepts when the work reaches them rather than as upfront theory. Precision and honesty stay the same; only the volume per turn changes.
+
 ---
 
 ## 1. Standing facts (verified, slow-changing)
