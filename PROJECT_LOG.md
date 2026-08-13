@@ -131,6 +131,30 @@ Read in full. `VirtualTaxelSensor.update()` is the algorithm every later impleme
 
 ### 1.5b ⚠ The GPU stack's hand model has no taxels in it (found 2026-08-13, on first clone)
 
+> **CORRECTION, same day, before acting on any of this.** The first pass checked `leapXela_generated_mjx.xml` and `..._CoACD.xml` but **not `..._Box.xml`**, which is the variant `get_hand_xml()` defaults to. Corrected counts of `<site name="taxel_NNN">`:
+>
+> | file | pinned `4e8003f` (what mjlab loads) | current `main` |
+> |---|---|---|
+> | `leapXela_generated_mjx.xml` | 0 | 0 |
+> | `leapXela_generated_mjx_Box.xml` | **0** | **368** |
+> | `leapXela_generated_mjx_CoACD.xml` | 0 | 0 |
+> | `leapXela_generated_mjx_flex_sensorCoACD.xml` | — | 368 |
+>
+> **The section's conclusion still holds for what mjlab actually trains on today** — every variant at the pinned June-11 commit has zero taxel sites. But it is wrong about current `main`, and the two facts below change the plan.
+
+**(a) The 368 taxels on current `main` are not what the splat encoder needs.** They sit on **368 individual flex bodies** — `flex_if_tip_1..30`, `flex_uspa46_1_0..23`, etc., one taxel site per body — children of the rigid links. That is the **flex/bubble skin representation** (plan §2.2c, hypothesis H4). The splat encoder needs 368 sites on the **12 rigid links**, because `VirtualTaxelSensor` groups taxels by body and Gaussian-splats each contact across *that body's* taxels. On the flex model every body owns exactly one taxel, so the splat degenerates to a single taxel per contact — the algorithm silently stops being itself. **The two representations need different models. `BODY_MAP` is still required for the splat path.**
+
+**(b) ⚠ Bumping the submodule silently swaps the robot.** Same filename, completely different model:
+
+| `leapXela_generated_mjx_Box.xml` | bodies | joints | connects | taxel sites |
+|---|---|---|---|---|
+| pinned `4e8003f` (Jun 11) | **17** | 25 | 0 | 0 |
+| current `main` (Aug 12) | **385** | **1129** | **368** | 368 |
+
+A submodule bump would hand mjlab a 385-body, 1129-joint, 368-constraint deformable hand in place of a 17-body rigid one, under an unchanged path. At 4096 envs that is not a small change — it is hypothesis H4 being triggered by accident, with no measurement and no decision. **Do not bump the submodule casually; pin deliberately and measure the flex model as its own representation.**
+
+**(c) `BODY_MAP` was re-validated against the pinned model** (`third_party/leapXelaMjLab/.../assets/leapXELA_model`, both `_Box` and plain): identical result, 8/12 frames agree, same four fingertips off by the same 10.33 mm. The mapping work is unaffected by this correction.
+
 Not mentioned anywhere in the plan doc, and it is the **first real engineering task**.
 
 **Three separate problems, stacked:**
