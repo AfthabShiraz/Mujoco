@@ -36,11 +36,14 @@ FIELDS = [
     "num_envs", "tactile", "ok", "env_steps_per_sec", "us_per_env_step",
     "ms_per_step", "peak_rss_gb", "rss_after_alloc_gb", "gb_per_env_mb",
     "setup_s", "warmup_s", "wall_s", "steps", "device",
-    "contacts", "contacts_per_env", "overflow_worlds", "naconmax_total", "njmax_actual", "note",
+    "contacts", "contacts_per_env", "overflow_worlds", "naconmax_total", "njmax_actual",
+    "physics_ms_per_step", "encoder_ms_per_step", "encoder_frac", "torch_peak_gb",
+    "dropped_contacts", "active_taxels_world0", "note",
 ]
 
 
-def run_one(n: int, steps: int, warmup: int, mem_cap_gb: int, timeout_s: int) -> dict:
+def run_one(n: int, steps: int, warmup: int, mem_cap_gb: int, timeout_s: int,
+            tactile: str = "none") -> dict:
     """One measurement, in its own memory-capped scope."""
     cmd = []
     if shutil.which("systemd-run"):
@@ -50,7 +53,8 @@ def run_one(n: int, steps: int, warmup: int, mem_cap_gb: int, timeout_s: int) ->
             "-p", "MemorySwapMax=0",
         ]
     cmd += [str(PYTHON), str(HARNESS), "--num-envs", str(n),
-            "--steps", str(steps), "--warmup", str(warmup)]
+            "--steps", str(steps), "--warmup", str(warmup),
+            "--tactile", tactile]
 
     t0 = time.perf_counter()
     try:
@@ -84,6 +88,7 @@ def main() -> int:
                     help="hard MemoryMax per child, GB. Keep well under total RAM.")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--tag", default="physics_only")
+    ap.add_argument("--tactile", choices=["none", "splat"], default="none")
     args = ap.parse_args()
 
     ladder = [n for n in DEFAULT_LADDER if n <= args.max_envs]
@@ -98,7 +103,8 @@ def main() -> int:
 
     rows = []
     for n in ladder:
-        r = run_one(n, args.steps, args.warmup, args.mem_cap, args.timeout)
+        r = run_one(n, args.steps, args.warmup, args.mem_cap, args.timeout,
+                    tactile=args.tactile)
         r.setdefault("tactile", args.tag)
         r.setdefault("note", "")
         if r.get("ok"):

@@ -79,7 +79,39 @@ after which throughput is encoder-bound.
 
 *The crossover point is the headline number. The range is a genuine guess.*
 
-**Resolution:** _unresolved_
+**Resolution (2026-08-13): CONFIRMED. Crossover measured at N = 256, inside the predicted [64, 1024].**
+
+`benchmarks/results/scale_sweep_splat.csv` vs `..._physics_only.csv`, identical
+scene and settings, ~4.3 live contacts/env, zero contact overflow at every N:
+
+| N | physics-only/s | splat/s | slowdown | physics ms | encoder ms | encoder % |
+|---|---|---|---|---|---|---|
+| 1 | 268 | 228 | 1.17× | 3.75 | 0.60 | 13.8% |
+| 16 | 4,051 | 3,293 | 1.23× | 4.15 | 0.75 | 15.2% |
+| 64 | 16,055 | 11,259 | 1.43× | 4.09 | 1.62 | 28.4% |
+| 128 | 32,164 | 11,881 | 2.71× | 6.99 | 3.82 | 35.3% |
+| **256** | 40,289 | 17,723 | 2.27× | 6.99 | **7.54** | **51.9%** ← crossover |
+| 512 | 62,364 | 22,005 | 2.83× | 8.82 | 14.53 | 62.2% |
+| 1024 | 78,550 | 25,555 | 3.07× | 11.57 | 28.43 | 71.1% |
+| 4096 | 129,682 | 28,177 | **4.60×** | 33.33 | **112.26** | **77.1%** |
+
+**The bottleneck migrates, as predicted.** At small N the encoder is a steady
+~14% tax. Past N≈64 its share climbs monotonically; at N=256 it overtakes
+physics; by N=4096 it is 77% of step time and touch costs a **4.6× throughput
+penalty**.
+
+Mechanism: physics scales sublinearly (33× more time for 4096× the work,
+N=1→4096), while the naive encoder scales close to linearly (0.60 → 112.26 ms,
+187×). It is a dense `B × C × T` formulation — every env × 48 contacts × 368
+taxels — so its work grows in proportion to N with no reuse. Physics amortises;
+the encoder does not.
+
+**Amdahl ceiling, stated before optimising:** the encoder is 77.1% of step time
+at N=4096, so eliminating it *entirely* caps end-to-end speedup at
+**1 / (1 − 0.771) = 4.37×**. Any kernel result must be reported against that
+bound.
+
+Memory never bound: torch peak 4.06 GB at N=4096, process peak 1.72 GB steady.
 
 ---
 
