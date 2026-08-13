@@ -62,6 +62,31 @@ SUSPECT = {"finger", "finger_2", "finger_3", "thumb"}
 assert set(BODY_MAP) == CONFIRMED | SUSPECT
 
 
+def remap_layout(layout):
+    """Return a copy of the layout with `entry.body` renamed to RL-lineage names.
+
+    Injecting the sites is NOT sufficient to run `VirtualTaxelSensor` against the
+    mjlab model. Its constructor groups taxels by body with
+
+        body_id = mj_name2id(model, mjOBJ_BODY, entry.body)
+
+    and `entry.body` holds tactile-lineage names ('finger', 'p2_unified', ...),
+    which do not exist in the RL model -- every lookup returns -1, every taxel
+    lands in one bogus group, and no contact ever matches. The encoder runs
+    happily and outputs all zeros.
+
+    Remapping the layout rather than patching the encoder keeps the reference
+    implementation byte-for-byte untouched, which matters because it is the
+    correctness oracle.
+    """
+    import dataclasses
+
+    entries = tuple(
+        dataclasses.replace(e, body=BODY_MAP[e.body]) for e in layout.entries
+    )
+    return dataclasses.replace(layout, entries=entries)
+
+
 def quat_rot(q: np.ndarray, v: np.ndarray) -> np.ndarray:
     """Rotate row-vectors v (N,3) by MuJoCo quaternion q (w,x,y,z)."""
     w, x, y, z = q

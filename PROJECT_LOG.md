@@ -243,6 +243,20 @@ Measured burial by ray-cast along each taxel's own +z, **restricted to its own b
 
 **Still open:** the four fingertips remain a geometrically different part (~10 mm longer, §1.5b), so their 136 taxels are placed on a tip that is not the one they were calibrated against. Burial there is small (2.17–2.85 mm) and within the gate, but the *lateral* placement is unverified. This is the question for Hamid.
 
+### 1.5d The reference encoder runs on the mjlab hand — oracle banked (`explore/04_run_encoder.py`)
+
+`VirtualTaxelSensor` now produces real taxel readings on the model mjlab trains on. First working touch on the RL hand. Busiest frame: 28 taxels active, peak 5.06 N, channels behaving sanely (`normal_z` positive under compression).
+
+**⚠ Porting gotcha — injecting the sites is not sufficient.** `VirtualTaxelSensor.__init__` groups taxels by body:
+```python
+body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, entry.body)
+```
+`entry.body` holds *tactile-lineage* names, absent from the RL model, so every lookup returns `-1`, all 368 taxels collapse into one bogus group, and no contact ever matches. **The encoder runs without error and outputs all zeros.** Fixed by `taxel_map.remap_layout()`, which rewrites `entry.body` through `BODY_MAP` — deliberately remapping the *layout* rather than patching the encoder, since the encoder is the correctness oracle and must stay byte-for-byte identical. Any GPU port needs the same remap.
+
+**Oracle fixture:** `explore/out/oracle_fixture.npz`, 30 frames sampled through a scripted grasp, including `ncon=0` cases. Each frame stores the encoder's *inputs* (contact pos, frame, geom ids, 6-vector force, plus `site_xpos`/`site_xmat`/`qpos`) alongside its 368×3 output, so any later implementation can be validated **without re-running MuJoCo** — which also sidesteps the Warp-vs-CPU contact discrepancy problem (plan §7) for pure encoder validation.
+
+**Caveat on coverage:** in this grasp only the palm fired. Contacts do occur on the finger links (`if_md_uspa44`, `if_tip` — see `01_see_contacts.py`), but the 4×4 pads cover one face of each link, so a contact on an uncovered face correctly yields zero weight and is skipped. The fixture therefore exercises the palm path well and the finger path barely. **Before trusting a kernel against it, extend the fixture with a grasp that loads the fingertips.**
+
 ### 1.6 Plan-doc accuracy audit (2026-08-13) — every claim checked against source
 
 `project2_parallel_rl_sim_pipeline.md` was audited claim-by-claim and **patched**. It held up unusually well.
