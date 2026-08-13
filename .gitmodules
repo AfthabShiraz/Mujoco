@@ -1,0 +1,6 @@
+[submodule "third_party/leapXelaMjLab"]
+	path = third_party/leapXelaMjLab
+	url = https://github.com/AfthabShiraz/leapXelaMjLab
+[submodule "third_party/leapXELA_model"]
+	path = third_party/leapXELA_model
+	url = https://github.com/AfthabShiraz/leapXELA_model
