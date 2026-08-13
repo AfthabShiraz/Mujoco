@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+*.key
+
+# MuJoCo
+MUJOCO_LOG.TXT
+
+# Training / experiment output
+wandb/
+logs/
+runs/
+outputs/
+checkpoints/
+*.pt
+*.pth
+
+# Large or regenerable artifacts
+*.mp4
+*.npz
+# ...but oracle fixtures ARE the ground truth for kernel validation (plan §7) — keep them
+!tests/fixtures/**/*.npz
+!analysis/fixtures/**/*.npz
+profiling/nsight/*.nsys-rep
+profiling/nsight/*.ncu-rep
+
+# Build
+build/
+dist/
+*.so
+*.o
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
