@@ -33,6 +33,81 @@ them, and so nothing here is silently revised later.
 
 ---
 
+## Findings from widening validation coverage (2026-08-14)
+
+`explore/05_grasp_motions.py` ports the supervisor's seven grasp patterns from
+`sparsh-skin-sim/util/motion_util.py` (constants copied verbatim, attributed in
+the module docstring) and regenerates the oracle as
+`explore/out/oracle_fixture_v2.npz`: **632 frames, 56 trials**, versus 30 frames
+before. Coverage:
+
+| | v1 | v2 |
+|---|---|---|
+| taxels ever live | 37/368 | **176/368** |
+| fingertips | 2/136 | **57/136** |
+| medial links | 0/48 | **0/48** |
+| contacts/frame max | 14 | 19 |
+| shear range | ±2.5 N | **±5.4 N** |
+
+Both implementations still validate. All 11 tests pass.
+
+### F1 — The encoder's gate is discontinuous, and float32 lands on it
+
+Widening coverage exposed a **4.6% relative error** invisible to v1. It is *not*
+on the fingertips (those are clean at ~6e-6) — it is on the **palm**, and it is
+**numerical, not indexing or placement**.
+
+The reference gates each splat with hard thresholds (`dist_sq > cutoff²`,
+`|local_z| > cutoff`) and then renormalises by the *surviving* weight sum. In
+this scene the palm taxel plane sits at `|local_z|` = **10.0000 mm** against a
+10 mm cutoff — measured margins of **0.0 to 0.2 µm**. float32 cannot resolve
+that, so a taxel falls on the opposite side of the gate from the float64
+reference; losing one taxel from a 2–5 taxel splat rescales the survivors. Hence
+a clean, identical 4.592e-2 on all three channels rather than noise.
+
+Control: the *same* torch code in float64 collapses the error to **4.16e-07**.
+Both implementations are correct; the algorithm is discontinuous and this scene
+sits on the discontinuity.
+
+**Implication for the supervisor:** any float32 GPU port of `VirtualTaxelSensor`
+will disagree with the float64 CPU reference by ~5% relative on palm taxels
+whenever the palm is loaded. That is a property of the gate, not of the kernel.
+Tests now assert a tight float64 bound (1e-6, the real semantic claim) plus a
+documented loose float32 bound; Triton-vs-torch at matched precision stays at
+9.5e-7.
+
+### F2 — 48 medial taxels are structurally unreachable in this scene
+
+Every cube contact on `if_md`/`mf_md` is **11.50 mm** out of plane — a constant,
+above the 10 mm cutoff. 0 of 32 medial contacts reached a taxel. **No motion
+fixes this**; the pads sit on a different face of the link from the one the cube
+presses. Verified as *not* a lineage artefact: the taxel-to-surface geometry is
+**identical in both model lineages** (palm 1.00 mm, proximal 1.62 mm, medial
+2.04 mm), so this is a property of the supervisor's own layout, not of our
+transplant.
+
+### F3 — D4 quantified: the fingertip mismatch is a knife-edge
+
+Fingertip contacts sit **9–10.8 mm** out of plane — straddling the gate — and
+**33–49% produce nothing**. The nearest in-plane taxel is 6 mm away laterally.
+This is the signature of the cube touching the RL tip's extra ~10.3 mm of distal
+length, which carries no taxels. Fingertip readings are therefore hypersensitive:
+a sub-millimetre change to tip geometry flips taxels between firing and silent.
+`explore/06_visualise_gate.py` and `07_grasp_video.py` render this directly —
+three of four fingertips register contacts and fire zero taxels.
+
+**One deviation from the supervisor's constants, flagged in code:**
+`thumb_grip_fraction` 0.35 → 0.70 for half the trials. His 0.35 is a fraction of
+*ctrl range*, which on this hand leaves the thumb more open than the scene's own
+`home` pose, so it never opposes the cube and all 62 thumb taxels read zero. 4 of
+8 trials per pattern still run his default profile verbatim.
+
+**Remaining dark taxels (192):** 48 structurally unreachable medial + 51 thumb +
+79 palm/fingertip/proximal that this scene's contact patches never visit. Max
+contacts is 19 against the 48-slot budget — a one-cube scene does not saturate it.
+
+---
+
 ## H1 — Physics dominates when tactile is off
 
 With no tactile observation, the physics step accounts for the majority of

@@ -10,13 +10,34 @@ which is the failure mode this whole line of work guards against
 worth nothing").
 
 So:
-  1. against `explore/out/oracle_fixture.npz` — the banked CPU reference encoder's
-     inputs and outputs, the same fixture `tests/test_encoder_oracle.py` uses.
-     This checks the *semantics* (force sign, cutoffs, patch gate, body masking,
-     the final z flip) against something that never went through torch at all.
+  1. against BOTH banked oracle fixtures — the CPU reference encoder's inputs and
+     outputs, the same files `tests/test_encoder_oracle.py` uses. This checks the
+     *semantics* (force sign, cutoffs, patch gate, body masking, the final z
+     flip) against something that never went through torch at all.
+       * `oracle_fixture.npz`    — 30 frames, 37 of 368 taxels ever live, 2 of
+         them on a fingertip. Too narrow to catch a fingertip-only bug.
+       * `oracle_fixture_v2.npz` — 632 frames from seven purpose-built grasp
+         patterns (`explore/05_grasp_motions.py`), 176 taxels live including 57
+         fingertip taxels, and up to 19 contacts per frame.
+     Fingertip error is reported separately for both, because the four fingertip
+     bodies are the ones whose geometry differs between the tactile and RL model
+     lineages (`taxel_map.SUSPECT`) and a max over all 368 taxels is dominated by
+     the palm.
   2. against `encoders.taxel_torch.encode_taxels` on synthetic batches at
      B = 1, 32, 1024, using `profiling/profile_encoder.py`'s `make_inputs` so the
      input statistics match the ones every profiling number was taken on.
+
+ON v2's LOOSER BOUND — the same float32 gate flip `tests/test_encoder_oracle.py`
+documents at length, and it is NOT a Triton bug. The reference zeroes weights
+with hard thresholds (`dist_sq > cutoff**2`, `|local_z| > cutoff`) and then
+renormalises by the surviving sum. In this scene the palm taxel plane sits at
+|local_z| = 10.0000 mm against a `kernel_cutoff` of 0.01 m — margins measured at
+0.0-0.2 micrometres — so float32 puts a taxel on the other side of the gate from
+the float64 reference, and losing one taxel from a 2-5 taxel splat rescales the
+rest. The torch baseline shows the identical ~4.6% relative error on the same
+frames, and running that baseline in float64 collapses it to 4e-7; so this test
+also asserts Triton-vs-torch at float32, which is the comparison that stays tight
+and is the one that would actually catch a kernel bug.
 
 Explicitly covered edge cases, because each has its own way of going wrong:
   * `ncon == 0` (C == 0)     -> zeros, not NaN and not a launch of an empty grid
@@ -65,9 +86,19 @@ from encoders.taxel_torch import (  # noqa: E402
 )
 from kernels.triton.taxel_triton import encode_taxels_triton  # noqa: E402
 
-FIXTURE = ROOT / "explore" / "out" / "oracle_fixture.npz"
+FIXTURES = {
+    "v1": ROOT / "explore" / "out" / "oracle_fixture.npz",       # 04_run_encoder.py
+    "v2": ROOT / "explore" / "out" / "oracle_fixture_v2.npz",    # 05_grasp_motions.py
+}
 CHANNELS = ("shear_x", "shear_y", "normal_z")
-ABS_TOL = 1e-4      # the mandated gate; achieved error is reported alongside
+
+# vs the float64 CPU oracle. v1 keeps the mandated gate; v2's is the measured
+# float32 gate-flip error (see the module docstring), which the torch baseline
+# incurs identically.
+ABS_TOL = {"v1": 1e-4, "v2": 5e-3}
+# vs the torch baseline at the SAME precision — no gate flip, so this stays
+# tight, and it is the bound that actually polices the kernel.
+VS_TORCH_TOL = 1e-4
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="Triton kernel requires CUDA"
@@ -124,7 +155,19 @@ def _report(title: str, abs_err, rel_err):
 # --------------------------------------------------------------------------- #
 
 
-def _oracle_frames():
+def _fingertip_taxels() -> np.ndarray:
+    """Mask over the 368 taxels selecting the four fingertip bodies.
+
+    `taxel_map.SUSPECT` is the set of bodies whose RL counterpart is a physically
+    different, ~10 mm longer part — the least certain placement in the system.
+    """
+    from leapxela.taxel_layout import build_layout
+    from taxel_map import SUSPECT
+
+    return np.array([e.body in SUSPECT for e in build_layout().entries])
+
+
+def _oracle_frames(fixture: pathlib.Path):
     """Fixture + model -> per-frame numpy inputs, exactly as the oracle test does."""
     from leapxela.taxel_layout import build_layout
     from taxel_map import remap_layout
@@ -134,7 +177,7 @@ def _oracle_frames():
     layout = remap_layout(build_layout())
     static = prepare_static(model, layout, ref.cube_geom_names(model))
 
-    npz = np.load(FIXTURE)
+    npz = np.load(fixture)
     n_frames = int(npz["n_frames"])
     frames = []
     for i in range(n_frames):
@@ -192,10 +235,16 @@ def _pad_batch(frames, static, dev):
     ), B, C, T
 
 
-def test_triton_matches_oracle():
+@pytest.mark.parametrize("version", sorted(FIXTURES))
+def test_triton_matches_oracle(version: str):
     """Semantics, against the banked CPU reference encoder's own output."""
+    fixture = FIXTURES[version]
+    assert fixture.exists(), (
+        f"{fixture} missing — regenerate it with "
+        f"explore/{'04_run_encoder' if version == 'v1' else '05_grasp_motions'}.py"
+    )
     dev = torch.device("cuda")
-    static, frames, sigma, cutoff = _oracle_frames()
+    static, frames, sigma, cutoff = _oracle_frames(fixture)
     batch, B, C, T = _pad_batch(frames, static, dev)
 
     got = encode_taxels_triton(
@@ -207,9 +256,12 @@ def test_triton_matches_oracle():
 
     empty = [i for i, f in enumerate(frames) if f["ncon"] == 0]
     nonempty = [i for i, f in enumerate(frames) if f["ncon"] > 0]
-    print(f"\noracle: {B} frames padded to C={C}, T={T}, "
-          f"sigma={sigma}, cutoff={cutoff}; ncon==0 frames {empty}")
-    _report("Triton vs oracle fixture", abs_err, rel_err)
+    live = (np.linalg.norm(ref, axis=2) > 1e-6).any(axis=0)
+    tip = _fingertip_taxels()
+    print(f"\noracle {version} ({fixture.name}): {B} frames padded to C={C}, T={T}, "
+          f"sigma={sigma}, cutoff={cutoff}; {len(empty)} ncon==0 frames; "
+          f"{live.sum()}/{T} taxels live ({(live & tip).sum()}/{tip.sum()} fingertip)")
+    _report(f"Triton vs oracle fixture {version}", abs_err, rel_err)
 
     # The fixture must actually exercise the encoder, or this proves 0 == 0.
     assert nonempty, "fixture has no contact frames"
@@ -221,7 +273,28 @@ def test_triton_matches_oracle():
         assert np.array_equal(got[i], np.zeros_like(got[i])), \
             f"frame {i} has ncon=0 but the Triton output is non-zero"
 
-    assert abs_err.max() < ABS_TOL, f"abs error {abs_err} exceeds {ABS_TOL}"
+    # FINGERTIPS SEPARATELY — the max above is dominated by the 120 palm taxels,
+    # so a fingertip-only kernel bug would not move it.
+    if (live & tip).any():
+        t_abs, t_rel = _errors(got[:, tip], ref[:, tip])
+        _report(f"Triton vs oracle {version}, fingertip taxels only "
+                f"({(live & tip).sum()}/{tip.sum()} ever live)", t_abs, t_rel)
+        assert t_abs.max() < ABS_TOL[version], \
+            f"fingertip abs error {t_abs} exceeds {ABS_TOL[version]}"
+
+    # vs the TORCH baseline at the same precision. The oracle comparison above is
+    # float32-vs-float64 and so carries the gate flip; this one does not, and is
+    # therefore the bound that actually polices the kernel.
+    torch_ref = encode_taxels(
+        **batch, kernel_sigma=sigma, kernel_cutoff=cutoff).cpu().numpy()
+    vt_abs, vt_rel = _errors(got, torch_ref)
+    _report(f"Triton vs torch baseline on fixture {version} (same precision)",
+            vt_abs, vt_rel)
+    assert vt_abs.max() < VS_TORCH_TOL, \
+        f"Triton disagrees with the torch baseline by {vt_abs} (> {VS_TORCH_TOL})"
+
+    assert abs_err.max() < ABS_TOL[version], \
+        f"abs error {abs_err} exceeds {ABS_TOL[version]}"
 
 
 # --------------------------------------------------------------------------- #
@@ -240,7 +313,8 @@ def test_triton_matches_torch(B: int):
     abs_err, rel_err = _errors(got.cpu().numpy(), ref.cpu().numpy())
     _report(f"Triton vs torch reference, B={B} "
             f"(peak |ref| = {ref.abs().max().item():.4f})", abs_err, rel_err)
-    assert abs_err.max() < ABS_TOL, f"B={B}: abs error {abs_err} exceeds {ABS_TOL}"
+    assert abs_err.max() < VS_TORCH_TOL, \
+        f"B={B}: abs error {abs_err} exceeds {VS_TORCH_TOL}"
 
 
 # --------------------------------------------------------------------------- #
@@ -378,7 +452,8 @@ def test_determinism():
 # --------------------------------------------------------------------------- #
 
 if __name__ == "__main__":
-    test_triton_matches_oracle()
+    for _v in sorted(FIXTURES):
+        test_triton_matches_oracle(_v)
     for _b in (1, 32, 1024):
         test_triton_matches_torch(_b)
     test_ncon_zero()

@@ -1,0 +1,335 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage{ifpdf}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage[normalem]{ulem}
+\usepackage{xcolor}
+\ifCLASSINFOpdf
+  \usepackage[pdftex]{graphicx}
+\else
+  \usepackage[dvips]{graphicx}
+\fi
+\graphicspath{{analysis/plots/}}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{array}
+\usepackage{float}
+\ifCLASSOPTIONcompsoc
+  \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\else
+  \usepackage[caption=false,font=footnotesize]{subfig}
+\fi
+\usepackage{fixltx2e}
+\usepackage{stfloats}
+\usepackage{url}
+
+\begin{document}
+
+\title{Tactile Observations at Training Scale:\ Bottleneck Migration and a Sparse GPU Encoder}
+
+\author{Afthab Shiraz, University College London}
+
+\maketitle
+
+\begin{abstract}
+This report measures the cost of a hardware-faithful tactile observation in a GPU-parallel MuJoCo Warp simulation of the LeapXELA hand. Native MuJoCo touch sensors already execute on GPU under Warp; the missing component addressed here is the three-channel, 368-taxel Gaussian-splat representation used by the reference XELA software, together with a measurement of its cost at reinforcement-learning scale. At the training timestep of 0.01~s, a faithful dense PyTorch port overtakes physics at 256 environments. At 4096 environments it occupies 76.9\% of step time and changes the cost of a step by a factor of 4.57. Profiling identifies memory traffic, rather than arithmetic or launch overhead, as the limiting mechanism: arithmetic intensity is 0.192~FLOP/byte against an empirically measured ridge point of 70.7~FLOP/byte. A two-pass Triton gather kernel avoids dense environment--contact--taxel intermediates and reduces modeled traffic from 19.99~GB to 136~MB. It is 188 times faster than eager PyTorch and 78 times faster than \texttt{torch.compile} in the isolated kernel benchmark. End to end, the cost of tactile sensing falls from 4.57 to 1.09 times the physics-only step, a 4.18-fold gain against an Amdahl ceiling of 4.34. The result is deterministic and agrees with the banked CPU oracle to a maximum absolute error of $1.94\times10^{-6}$. The study covers one tactile representation and the simulator step rather than a complete policy-training loop; those boundaries are kept explicit.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Tactile sensing, GPU simulation, MuJoCo Warp, Triton, reinforcement learning, performance engineering.
+\end{IEEEkeywords}
+
+\IEEEpeerreviewmaketitle
+
+\section{Introduction}
+
+\IEEEPARstart{G}{PU-parallel} simulation amortises control and physics work across thousands of independent robot environments. This makes quantities that were negligible in a single environment candidates for the dominant cost at training scale. Tactile hands are a particularly relevant case: the physical sensor may expose hundreds of spatially arranged measurements, while a simulator must derive those measurements from an irregular and changing contact set every step.
+
+The target system is the rigid LeapXELA hand used by the supervisor's mjlab cube-reorientation stack. Its existing observations contain no tactile term. The associated CPU software provides \texttt{VirtualTaxelSensor}, a hardware-faithful Gaussian-splat encoder whose 368 three-axis outputs preserve the ordering of the physical XELA taxels. The research gap is deliberately narrow. MuJoCo Warp already implements native MuJoCo \texttt{<touch>} sensing on GPU. What was absent was this 368-taxel splat encoder on GPU and a controlled measurement of what it costs at the scale used for training. Prior mjlab work with an 18-taxel Robotiq gripper reads built-in force sensors and does not supply this representation, kernel, or scaling study.
+
+This work makes four contributions. First, it reconciles the separate tactile/CPU and RL/GPU hand-model lineages and injects the taxel sites into the pinned rigid model. Second, it builds a memory-capped benchmark and a faithful batched PyTorch baseline. Third, it establishes by profiling that the baseline is bandwidth-bound because it materialises dense intermediates that mostly carry no signal. Fourth, it implements and validates a sparse two-pass gather kernel. The principal systems result is bottleneck migration: the naive encoder overtakes physics at $N=256$, while the optimised encoder reduces its share at $N=4096$ from 76.9\% to 6.5\%.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{A_bottleneck_migration.png}
+  \caption{Bottleneck migration at the supervisor's 0.01~s simulation timestep. The dense encoder overtakes physics at $N=256$ and dominates at larger batches.}
+  \label{fig:migration}
+\end{figure}
+
+\section{Background}
+
+\subsection{MuJoCo Warp and parallel environments}
+
+MuJoCo Warp expresses MuJoCo dynamics as GPU kernels over many worlds. In this study the same closed-hand cube-reorientation scene is replicated across $N$ environments. Physics throughput initially scales nearly linearly because additional environments fill otherwise idle parallel capacity; after saturation, step latency grows but aggregate environment-steps per second can continue to increase. Tactile encoding is performed after the contact state is available and therefore adds to the simulator step.
+
+The tested machine is an aarch64 NVIDIA DGX Spark with a GB10 GPU and 48 streaming multiprocessors. CPU and GPU share unified LPDDR5X memory. This matters operationally: an excessive allocation can exhaust host memory and wedge the machine rather than produce an isolated device out-of-memory exception. It also means that the empirically measured bandwidth ceiling is a shared resource.
+
+\subsection{The Gaussian-splat representation}
+
+For each valid object--hand contact, the reference encoder obtains the linear contact force, applies the contact-frame rotation and sign convention, and considers only taxels belonging to the contacted body. For taxel $t$ and contact $c$, the contact offset is transformed into the taxel-local frame. Writing the local offset as $(x_{ct},y_{ct},z_{ct})$, the unnormalised weight is
+\begin{equation}
+  w_{ct}=\exp\left(-\frac{x_{ct}^{2}+y_{ct}^{2}}{2\sigma^{2}}\right).
+\end{equation}
+The weight is set to zero outside the in-plane cutoff and when $|z_{ct}|$ exceeds the same cutoff. This latter patch-locality gate prevents a contact from splatting onto a different patch that happens to share a rigid body. The remaining weights are normalised independently for each contact over that body's taxels. The locally rotated force is then accumulated into three output channels per taxel, with the normal sign changed so compression is positive.
+
+The calculation is irregular in two ways. The number and body assignment of contacts change with state, and different bodies own different subsets of taxels. A direct batch formulation regularises the shapes by padding every environment to 48 contact slots and evaluating all 368 taxels. It is simple and faithful, but creates a dense $B\times C\times T$ product whose work grows with $B$ even though only live contacts and the contacted body's taxels can contribute.
+
+\section{Method}
+
+\subsection{Model reconciliation and taxel injection}
+
+The RL/GPU model and tactile/CPU model are distinct lineages and the 12 layout bodies share zero names with the RL model. A name-order mapping would also be wrong: the tactile lineage's body named \texttt{finger} is the ring finger, not the index finger, so the apparently natural ordering silently swaps the ring and index chains. The mapping was instead derived from the kinematic tree, disambiguated by hardware patch names, and checked using body-local mesh bounding boxes. The palm and all proximal and middle links agree exactly under that check. The four fingertips differ geometrically; this limitation is discussed in Section~\ref{sec:threats}.
+
+The 368 sites are injected into the pinned 17-body rigid model using MuJoCo's specification API. Per-body ray tests show that every injected site remains within the reference encoder's patch-locality gate. Remapping the layout is essential as well as injecting sites: without it, reference body lookups return an invalid identifier, all taxels collapse into a bogus group, and the encoder produces plausible-looking all-zero output without raising an error.
+
+\subsection{Oracle and correctness gates}
+
+The CPU \texttt{VirtualTaxelSensor} supplied with the tactile model is treated as the semantic oracle. A banked fixture contains the inputs and 368-by-3 outputs for a scripted grasp, including no-contact frames, so implementations can be compared without introducing CPU-versus-Warp contact-generation differences. The reference accumulates in double precision and casts at its output, whereas the GPU paths use single precision; agreement is therefore assessed by measured absolute error rather than bit equality with the oracle.
+
+The batched PyTorch implementation preserves the reference operations: contact-force rotation, body masking, Gaussian and locality gates, per-contact normalisation, local-force rotation, accumulation, and the final normal sign. It deliberately creates the dense intermediates and serves as a readable baseline. The Triton implementation is gated both against the oracle and against this baseline, including empty contacts, zero normalisers, invalid padded slots, and contacts on bodies with no taxels.
+
+\subsection{Memory-capped benchmark harness}
+
+Every environment count runs in a separate subprocess under a systemd memory scope. Subprocess isolation both releases allocator state between points and ensures that the memory controller kills only the child if a run exceeds its cap. The harness warms the simulator, synchronises Warp on both sides of timing, and records fused throughput separately from a stage-synchronised physics/encoder decomposition. Physics-only, eager-splat, and Triton-splat sweeps use the same scene and settings. This report uses only the \texttt{\_dt01.csv} sweeps, for which the model timestep is explicitly set to 0.01~s to match the supervisor's configuration; earlier unsuffixed sweeps inherited 0.001~s and are superseded for end-to-end reporting.
+
+\subsection{Profiling method}
+
+The eager encoder was measured with PyTorch's per-operation CUDA profiler and an Nsight Systems timeline. A code-derived cost model assigns bytes and floating-point operations to each operation. Hardware-counter profiling was attempted but unavailable, as detailed in Section~\ref{sec:threats}. Consequently, achieved bandwidth is modeled bytes divided by measured time. The comparison ceilings are empirical measurements on the same otherwise-idle host: 260.8~GB/s for a saturating read and 18.44~TFLOP/s for FP32 SGEMM with TF32 disabled.
+
+The profiling diagnosis is tested experimentally by compiling the unmodified encoder. \texttt{torch.compile} changes neither algorithm nor sparsity, but fuses elementwise work and removes intermediate round trips. Its 2.41-fold isolated speedup at $N=4096$, with numerically identical output at the reported tolerance, is both a useful baseline and a controlled test of the traffic diagnosis.
+
+\subsection{Two-pass gather kernel}
+
+The Triton design assigns pass 1 to contact normalisation and pass 2 to taxel output. Pass 1 uses one program per environment--contact pair, visits only taxels on the contacted body, and stores one weight sum. Pass 2 uses one program per environment--taxel tile, traverses contact slots in fixed order, recomputes the Gaussian weights, and accumulates the three force channels in registers. It emits only the final output; no $B\times C\times T$ intermediate is materialised.
+
+The two-pass form is forced by the mathematics rather than selected merely to reduce launches. Normalisation divides each weight by a reduction over the taxel axis, but that taxel axis is the parallel axis of the gather pass. Its denominator must therefore be available before pass 2 consumes it. Storing every weight would reintroduce substantial traffic, so the kernel stores one scalar normaliser per contact and recomputes weights. This is appropriate on a workload whose measured arithmetic intensity lies far below the machine ridge point. Both passes use fixed traversal orders and no atomics.
+
+\section{Results}
+
+\subsection{Scaling and first bottleneck migration}
+
+Table~\ref{tab:scaling} reports selected current sweep points. Physics-only latency is approximately flat through $N=128$, while aggregate throughput rises with $N$; saturation begins between 128 and 256 environments. The dense encoder's share then rises with scale. It crosses 50\% at $N=256$ and reaches 76.9\% at $N=4096$, confirming the registered crossover range. Figure~\ref{fig:throughput} shows the corresponding throughput scaling, and Fig.~\ref{fig:share} isolates the change in encoder share.
+
+\begin{table}[t]
+\caption{Current scaling results at $\mathit{sim\_dt}=0.01$~s. Rates are environment-steps/s; encoder shares come from stage-synchronised measurements.}
+\label{tab:scaling}
+\centering
+\small
+\begin{tabular}{rrrrr}
+\toprule
+$N$ & Physics & Eager & Triton & Eager share \\
+\midrule
+64   & 15,999  & 11,264 & 13,960  & 27.7\% \\
+256  & 38,310  & 18,486 & 34,715  & 53.3\% \\
+1024 & 78,349  & 25,148 & 77,361  & 70.2\% \\
+4096 & 128,061 & 28,006 & 116,961 & 76.9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{B_throughput_scaling.png}
+  \caption{Aggregate throughput continues to improve after physics saturation, but the dense splat path separates sharply from the physics-only and Triton paths at large $N$.}
+  \label{fig:throughput}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{C_encoder_share.png}
+  \caption{The eager encoder becomes the majority of stage-synchronised step time at $N=256$; the Triton encoder remains a small fraction at the largest batch.}
+  \label{fig:share}
+\end{figure}
+
+\subsection{Profiling verdict}
+
+At $N=4096$, the eager encoder moves 19.99~GB according to the operation-level traffic model and performs 3.843~GFLOP, for an arithmetic intensity of 0.192~FLOP/byte. The empirical ridge point is 70.7~FLOP/byte, placing the workload 368-fold to the bandwidth side of the ridge. It achieves 35.3~GFLOP/s, only 0.19\% of the measured compute ceiling. Conversely, modeled traffic divided by runtime is 183.9~GB/s, or 71\% of the measured read ceiling. The elementwise subset reaches 87\% of that ceiling.
+
+Launch overhead is not material: 58 launches at 3.34~$\mu$s account for 0.194~ms, or 0.18\% of the call. The dense product evaluates 72.4 million environment--contact--taxel triples, while measured contact sparsity and body masking leave about 492 thousand carrying signal. Thus the problem is not too little fusion alone; the algorithm visits and materialises predominantly irrelevant pairs. Table~\ref{tab:profile} summarises the evidence.
+
+\begin{table}[t]
+\caption{Profiling evidence at $N=4096$. Achieved bandwidth is modeled traffic divided by measured time, not a hardware-counter reading.}
+\label{tab:profile}
+\centering
+\small
+\begin{tabular}{lr}
+\toprule
+Metric & Value \\
+\midrule
+Eager traffic & 19.99~GB \\
+Eager arithmetic & 3.843~GFLOP \\
+Arithmetic intensity & 0.192~FLOP/byte \\
+Measured ridge point & 70.7~FLOP/byte \\
+Modeled achieved bandwidth & 183.9~GB/s \\
+Measured read ceiling & 260.8~GB/s \\
+Measured FP32 ceiling & 18.44~TFLOP/s \\
+Launch-overhead share & 0.18\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{F_encoder_three_ways.png}
+  \caption{Isolated encoder latency for eager PyTorch, \texttt{torch.compile}, and Triton. Compilation is a strong one-line baseline, but sparsity and traffic avoidance dominate at scale.}
+  \label{fig:threeways}
+\end{figure}
+
+\subsection{Kernel performance and correctness}
+
+Table~\ref{tab:kernel} compares the three isolated implementations. At $N=4096$, Triton reduces runtime from 109.525~ms eager and 45.536~ms compiled to 0.582~ms: gains of 188 and 78 times, respectively. Modeled traffic falls to 136~MB against a 103.8~MB compulsory floor. Its modeled bandwidth is 233.8~GB/s, or 89.6\% of the empirical read ceiling. Peak PyTorch allocation falls from 4.095~GB to 0.183~GB.
+
+\begin{table}[t]
+\caption{Isolated encoder benchmark. Times are milliseconds per call; speedups use unrounded measurements.}
+\label{tab:kernel}
+\centering
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+$N$ & Eager & Compile & Triton & vs. eager & vs. compile \\
+\midrule
+128  & 2.887  & 1.282  & 0.038 & 74.9$\times$ & 33.3$\times$ \\
+1024 & 27.340 & 11.196 & 0.132 & 207.5$\times$ & 85.0$\times$ \\
+4096 & 109.525& 45.536 & 0.582 & 188.2$\times$ & 78.3$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across 20 repeated runs at $B=1024$, all 1,130,496 output floats are bit-identical. This is run-to-run determinism, not bit equality with the CPU oracle. The maximum absolute error against the oracle fixture is $1.94\times10^{-6}$, and the kernel was re-gated inside the benchmark harness at $1.49\times10^{-7}$ before the end-to-end sweep.
+
+\subsection{End-to-end effect and Amdahl's law}
+
+At $N=4096$, the dense encoder's measured share $p=0.769$ gives an ideal end-to-end ceiling
+\begin{equation}
+  S_{\max}=\frac{1}{1-p}=4.34.
+\end{equation}
+The Triton path improves end-to-end throughput from 28,006 to 116,961 environment-steps/s, a gain of 4.18, or 96\% of that available ceiling. Relative to 128,061 environment-steps/s without tactile encoding, the cost of touch changes from $128061/28006=4.57$ to $128061/116961=1.09$. The encoder share falls to 6.5\%. Figures~\ref{fig:slowdown} and~\ref{fig:touchfree} show the result from complementary viewpoints; Fig.~\ref{fig:amdahl} places it against the bound.
+
+\begin{table}[t]
+\caption{End-to-end result at $N=4096$ and $\mathit{sim\_dt}=0.01$~s.}
+\label{tab:endtoend}
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+Path & env-steps/s & Cost of touch & Encoder share \\
+\midrule
+Physics only & 128,061 & 1.00$\times$ & 0.0\% \\
+Eager splat & 28,006 & 4.57$\times$ & 76.9\% \\
+Triton splat & 116,961 & 1.09$\times$ & 6.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{D_slowdown_factor.png}
+  \caption{Slowdown relative to physics-only execution. The eager tactile cost grows with batch size, whereas the Triton path remains close to the physics baseline.}
+  \label{fig:slowdown}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{E_touch_is_free.png}
+  \caption{At $N=4096$, replacing the dense encoder changes the tactile overhead from a 4.57-fold step cost to 1.09-fold; ``nearly free'' here refers only to the measured simulator step.}
+  \label{fig:touchfree}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{H_amdahl.png}
+  \caption{Measured end-to-end gain approaches the 4.34-fold ceiling set by the eager encoder's pre-optimisation share; further kernel tuning has little end-to-end leverage.}
+  \label{fig:amdahl}
+\end{figure}
+
+\section{Threats to Validity}
+\label{sec:threats}
+
+\textit{Profiler access.} Nsight Compute was blocked by \texttt{ERR\_NVGPUCTRPERM}: the driver restricts profiling counters to administrators. There is therefore no Nsight-reported limiter and no Nsight-measured DRAM throughput anywhere in this work. The roofline uses the empirically measured 260.8~GB/s read and 18.44~TFLOP/s SGEMM ceilings, while achieved bandwidth is computed from modeled bytes and measured time. In particular, apparent 96--99\% bandwidth utilisation at intermediate $N$ probably charges L2 reuse as though it were DRAM traffic. The 89.6\% result at $N=4096$ is the defensible figure.
+
+\textit{Contact dependence.} The dense baseline has fixed work for its padded shape, but the sparse kernel is data-dependent. At $N=4096$ it takes 0.54, 0.57, and 1.27~ms at 1, 4.3, and 48 live contacts per environment, respectively. The fully occupied case remains 86 times faster than eager, but the headline kernel latency belongs to the measured contact regime and should not be transferred unchanged to a harder grasp.
+
+\textit{Oracle coverage and geometry.} The oracle fixture is narrow: only 37 of 368 taxels fire across its frames, comprising 31 palm, 4 proximal-link, and 2 fingertip taxels. Moreover, 136 taxels lie on four fingertips whose RL-lineage geometry is approximately 10.3~mm longer than the tactile lineage. Their lateral placement has not been verified against the physical hand. Correctness against the software oracle therefore establishes implementation fidelity, not complete physical validity.
+
+\textit{System boundary.} The benchmark measures physics plus the tactile encoder, not the full mjlab training loop. It excludes PPO, policy evaluation, other observations, reward computation, rollout storage, and resets. Only the Gaussian-splat representation was measured; three of the four tactile representations in the project plan remain unresolved. The work therefore does not yet provide the intended complete cost-of-sensing comparison.
+
+\textit{Configuration caveat.} At the 0.01~s timestep, 2 of 4096 worlds raise \texttt{OverflowType.NEFC}, or 0.049\%. Warp requests \texttt{njmax}=124 against the configured 120. Contacts are unaffected: the observation is 7.1 contacts per environment against a cap of 48. This is constraint-row overflow rather than contact overflow, and the harness's aggregate overflow field must not be interpreted as a dropped-contact count.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{G_migration_undone.png}
+  \caption{The optimised encoder reverses the first bottleneck migration, but the remaining tactile-stage overhead motivates measurement inside preprocessing.}
+  \label{fig:undone}
+\end{figure}
+
+\section{Incidental Finding for Upstream}
+
+The marginal \texttt{njmax} setting should be reported upstream independently of the encoder result. At the supervisor's timestep, the configured 120 constraint rows are insufficient in 2 of 4096 worlds and Warp asks for 124. Since contact occupancy remains far below its separate cap, increasing or auditing the constraint-row budget is the relevant action. The low observed incidence makes this a minor configuration issue in the present benchmark, but silent overflow in a training configuration warrants explicit review.
+
+\section{Future Work}
+
+The first priority is to measure the three remaining tactile representations under the same timestep, scene, and memory isolation. Native touch sensing is already available in Warp and provides a particularly useful comparison; the geom-based touch grid and the deformable flex skin exercise different costs inside physics.
+
+The next optimisation target is tactile preprocessing, not the Triton kernel. In the current $N=4096$ sweep the complete tactile stage is 2.432~ms, whereas the isolated kernel is 0.582~ms. Subtracting these separately timed measurements suggests that approximately 76\% of the stage lies in contact-force extraction and packing. This is an inference, not direct instrumentation, so the stage must be subdivided and measured before attributing the residual to individual operations. Figure~\ref{fig:undone} illustrates this second prospective bottleneck migration.
+
+The optimised observation should then be wired into the full mjlab loop and evaluated with the policy, PPO, rewards, resets, and rollout buffers active. Finally, the physical fingertip variant must be established and the 136 lateral placements either validated or re-projected. Expanding the oracle with deliberately loaded finger and fingertip contacts should accompany that geometry work.
+
+\section{Conclusion}
+
+A faithful tactile encoder can change character as simulation parallelism grows: a modest small-batch cost became the majority of step time once physics had amortised across hundreds of environments. Profiling showed that the cause was neither GPU arithmetic nor launch overhead, but dense traffic for mostly irrelevant contact--taxel pairs. A two-pass gather reformulation, constrained by the per-contact taxel normalisation, removed those intermediates while retaining deterministic semantics. On the measured scene and training timestep it captured 96\% of the available Amdahl speedup and reduced the cost of touch from 4.57 to 1.09 times the physics-only step. The claim is intentionally limited to one representation and one simulator-stage benchmark; full training and cross-representation conclusions remain future measurements.
+
+\section*{Acknowledgements}
+
+The author thanks Hamid (Mohammad Hamid, \url{https://github.com/mohammad200h}) for providing three distinct foundations used in this project: the LeapXELA hand model, the CPU reference implementation \texttt{VirtualTaxelSensor}, and the mjlab reinforcement-learning training stack. Those artifacts are Hamid's contributions. The model reconciliation, GPU batched baseline, profiling study, Triton reformulation, validation, and measurements reported here are the work of this project.
+
+\appendices
+\section{Reproducibility}
+
+The measured software environment was MuJoCo 3.11.0, MuJoCo Warp 3.11.0, warp-lang 1.16.0, PyTorch 2.13.0+cu130, NumPy 2.5.2, CUDA 13.0.88, and Python 3.12.3 on an aarch64 GB10 with 48 streaming multiprocessors. Commands below are shown for reproduction; they were not rerun while preparing this report. Each command is executed from the repository root.
+
+\begin{verbatim}
+PYTHONPATH=third_party/leapXELA_model:explore \
+  systemd-run --user --scope -q \
+  -p MemoryMax=8G -p MemorySwapMax=0 \
+  .venv/bin/python tests/test_encoder_oracle.py
+
+PYTHONPATH=src:explore:third_party/leapXELA_model \
+  systemd-run --user --scope -q \
+  -p MemoryMax=8G -p MemorySwapMax=0 \
+  .venv/bin/python tests/test_triton_kernel.py
+
+PYTHONPATH=src:explore:third_party/leapXELA_model \
+  systemd-run --user --scope -q \
+  -p MemoryMax=8G -p MemorySwapMax=0 \
+  .venv/bin/python profiling/profile_encoder.py \
+  --mode bench --num-envs 4096 --bandwidth
+
+PYTHONPATH=src:explore:third_party/leapXELA_model \
+  systemd-run --user --scope -q \
+  -p MemoryMax=8G -p MemorySwapMax=0 \
+  .venv/bin/python benchmarks/harness.py \
+  --num-envs 4096 --tactile none
+
+PYTHONPATH=src:explore:third_party/leapXELA_model \
+  systemd-run --user --scope -q \
+  -p MemoryMax=8G -p MemorySwapMax=0 \
+  .venv/bin/python benchmarks/harness.py \
+  --num-envs 4096 --tactile splat \
+  --encoder torch
+
+PYTHONPATH=src:explore:third_party/leapXELA_model \
+  systemd-run --user --scope -q \
+  -p MemoryMax=8G -p MemorySwapMax=0 \
+  .venv/bin/python benchmarks/harness.py \
+  --num-envs 4096 --tactile splat \
+  --encoder triton --verify
+\end{verbatim}
+
+For a complete sweep, \texttt{benchmarks/scale\_sweep.py} launches one capped child per environment count; the model timestep must be explicitly fixed at 0.01~s and outputs should be given the \texttt{\_dt01} suffix so they cannot be confused with the superseded 0.001~s data. The banked report results are \texttt{scale\_sweep\_physics\_only\_dt01.csv}, \texttt{scale\_sweep\_splat\_dt01.csv}, \texttt{scale\_sweep\_splat\_triton\_dt01.csv}, and \texttt{kernel\_bench.csv}.
+
+\end{document}
