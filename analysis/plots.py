@@ -2,11 +2,17 @@
 
 Nothing here is hardcoded from a previous run: every number that appears on a
 figure -- the crossover env count, the linear-scaling knee, the slowdown factor,
-the Amdahl ceiling -- is derived from
-`benchmarks/results/scale_sweep_physics_only.csv` and
-`benchmarks/results/scale_sweep_splat.csv` at plot time. Re-run the sweeps and
-the figures (and their titles) follow. That is deliberate: a figure whose
-caption drifts from its data is worse than no figure.
+the Amdahl ceiling, the kernel speedups -- is derived from
+
+    benchmarks/results/scale_sweep_physics_only.csv   (no touch)
+    benchmarks/results/scale_sweep_splat.csv          (torch splat encoder)
+    benchmarks/results/scale_sweep_splat_triton.csv   (Triton splat encoder)
+    benchmarks/results/kernel_bench.csv               (encoder only: eager /
+                                                       torch.compile / Triton)
+
+at plot time. Re-run the sweeps and the figures (and their titles) follow. That
+is deliberate: a figure whose caption drifts from its data is worse than no
+figure.
 
     .venv/bin/python analysis/plots.py            # -> analysis/plots/*.png
 
@@ -39,12 +45,18 @@ DPI = 150
 
 PHYSICS_CSV = RESULTS / "scale_sweep_physics_only.csv"
 SPLAT_CSV = RESULTS / "scale_sweep_splat.csv"
+TRITON_CSV = RESULTS / "scale_sweep_splat_triton.csv"
+KERNEL_CSV = RESULTS / "kernel_bench.csv"
 
 # Okabe-Ito. BLUE/ORANGE are the two that must never be confused (they carry the
 # crossover), and they are the best-separated pair in the set under CVD.
-BLUE = "#0072B2"    # physics
-ORANGE = "#E69F00"  # encoder / tactile path
-GREEN = "#009E73"   # slowdown
+# Semantics are fixed across every figure: blue = physics / no touch,
+# orange = the torch splat encoder, green = the Triton kernel.
+BLUE = "#0072B2"    # physics / no touch
+ORANGE = "#E69F00"  # torch splat encoder (eager)
+GREEN = "#009E73"   # Triton kernel
+PURPLE = "#CC79A7"  # derived ratios (slowdown)
+SKY = "#56B4E9"     # torch.compile -- the honest middle baseline
 GREY = "#666666"    # reference lines, annotation
 FAINT = "#BBBBBB"
 
@@ -61,11 +73,15 @@ def load(path: pathlib.Path) -> dict[str, np.ndarray]:
 
     Columns are returned as float arrays; anything non-numeric (`note`, `device`,
     the empty cells of the physics-only file) becomes NaN and is simply not used.
-    A failed rung -- the memory ceiling -- is a legitimate row in these files and
-    must not be plotted as a data point, hence the `ok` filter.
+    A failed rung -- the memory ceiling -- is a legitimate row in the sweep files
+    and must not be plotted as a data point, hence the `ok` filter. `kernel_bench`
+    has no `ok` column (it is not a sweep to failure), so the filter is skipped
+    when the column is absent rather than assumed present.
     """
     with path.open(newline="") as fh:
-        rows = [r for r in csv.DictReader(fh) if r["ok"].strip().lower() == "true"]
+        rows = list(csv.DictReader(fh))
+    if rows and "ok" in rows[0]:
+        rows = [r for r in rows if r["ok"].strip().lower() == "true"]
     if not rows:
         raise SystemExit(f"{path} has no successful rows")
     rows.sort(key=lambda r: int(r["num_envs"]))
@@ -88,6 +104,27 @@ def matched(a: dict[str, np.ndarray], b: dict[str, np.ndarray]):
     ia = np.searchsorted(a["num_envs"], common)
     ib = np.searchsorted(b["num_envs"], common)
     return common, ia, ib
+
+
+def align(*ds: dict[str, np.ndarray]):
+    """Common env counts across any number of sweeps, plus an index per sweep.
+
+    The three sweeps happen to share all 13 rungs, but that is a fact about the
+    data rather than a guarantee, and a ratio between mismatched rungs would be
+    silently wrong rather than obviously wrong.
+    """
+    common = ds[0]["num_envs"]
+    for d in ds[1:]:
+        common = np.intersect1d(common, d["num_envs"])
+    idx = [np.searchsorted(d["num_envs"], common) for d in ds]
+    return common, idx
+
+
+def amdahl(frac: float, speedup):
+    """End-to-end speedup from making a stage of share `frac` go `speedup` times
+    faster. `speedup = inf` gives the ceiling 1/(1 - frac)."""
+    speedup = np.asarray(speedup, dtype=float)
+    return 1.0 / ((1.0 - frac) + frac / speedup)
 
 
 def crossover_n(splat: dict[str, np.ndarray]) -> float:
@@ -117,11 +154,14 @@ def linear_knee(d: dict[str, np.ndarray], tol: float = 1.15) -> float:
 # --------------------------------------------------------------------------- #
 
 
-def style_axes(ax, xlabel="environments (N)", logx=True, logy=False):
+def style_axes(ax, xlabel="environments (N)", logx=True, logy=False,
+               xticks=None, xticklabels=None, logbase=2):
     if logx:
-        ax.set_xscale("log", base=2)
-        ax.set_xticks(XTICKS)
-        ax.set_xticklabels([f"{t:,}" for t in XTICKS])
+        ax.set_xscale("log", base=logbase)
+        ticks = XTICKS if xticks is None else xticks
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([f"{t:,}" for t in ticks]
+                           if xticklabels is None else xticklabels)
         ax.minorticks_off()
     if logy:
         ax.set_yscale("log")
@@ -323,10 +363,10 @@ def fig_d(phys, splat):
     ax.text(common[i_max] * 1.5, 1.06, "no cost (touch is free)", fontsize=8.5,
             color=GREY, va="bottom", ha="right")
 
-    ax.plot(common, slowdown, color=GREEN, lw=2.2, marker="D", ms=5.0)
+    ax.plot(common, slowdown, color=PURPLE, lw=2.2, marker="D", ms=5.0)
     ax.annotate(f"{slowdown[i_max]:.2f}×", xy=(common[i_max], slowdown[i_max]),
                 xytext=(-4, 8), textcoords="offset points",
-                fontsize=10, color=GREEN, fontweight="bold", ha="right")
+                fontsize=10, color=PURPLE, fontweight="bold", ha="right")
 
     ax.set_ylim(0, max(5.0, slowdown.max() * 1.18))
     ax.set_xlim(0.75, common[i_max] * 1.6)
@@ -339,6 +379,290 @@ def fig_d(phys, splat):
         + setup_note(splat),
     )
     save(fig, "D_slowdown_factor.png")
+
+
+# --------------------------------------------------------------------------- #
+# E. The payoff: three configurations on one throughput plot
+# --------------------------------------------------------------------------- #
+
+
+def fig_e(phys, splat, tri):
+    """Throughput vs N for no touch / torch splat / Triton splat.
+
+    The point of the figure is a shape, not a number: the Triton curve rejoins
+    the no-touch curve, and the torch curve does not.
+    """
+    common, (ip, isp, it) = align(phys, splat, tri)
+    i_max = int(np.argmax(common))
+    cost_torch = phys["env_steps_per_sec"][ip] / splat["env_steps_per_sec"][isp]
+    cost_tri = phys["env_steps_per_sec"][ip] / tri["env_steps_per_sec"][it]
+    gain = tri["env_steps_per_sec"][it] / splat["env_steps_per_sec"][isp]
+    n_top = common[i_max]
+
+    fig, ax = plt.subplots(figsize=(7.0, 4.6))
+    style_axes(ax, logy=True)
+
+    ax.plot(phys["num_envs"], phys["env_steps_per_sec"], color=BLUE, lw=2.0,
+            marker="o", ms=5.5, label="no touch (physics only)")
+    ax.plot(splat["num_envs"], splat["env_steps_per_sec"], color=ORANGE, lw=2.0,
+            ls="--", marker="s", ms=5.5, label="torch splat encoder")
+    ax.plot(tri["num_envs"], tri["env_steps_per_sec"], color=GREEN, lw=2.0,
+            ls=(0, (5, 1, 1, 1)), marker="^", ms=6.0, label="Triton splat kernel")
+
+    # The gap that is left. Drawn rather than asserted.
+    ax.annotate(
+        "", xy=(n_top, phys["env_steps_per_sec"][ip][i_max]),
+        xytext=(n_top, splat["env_steps_per_sec"][isp][i_max]),
+        arrowprops=dict(arrowstyle="<->", color=GREY, lw=0.9, shrinkA=2, shrinkB=2),
+    )
+    ax.annotate(f"cost of touch\n{cost_torch[i_max]:.2f}× → {cost_tri[i_max]:.2f}×",
+                xy=(n_top, (phys["env_steps_per_sec"][ip][i_max]
+                            * splat["env_steps_per_sec"][isp][i_max]) ** 0.5),
+                xytext=(-12, 0), textcoords="offset points",
+                fontsize=8.5, color=GREY, ha="right", va="center",
+                bbox=dict(fc="white", ec="none", pad=1.5))
+
+    # The no-touch and Triton endpoints nearly coincide -- which is the finding --
+    # so their labels have to be pushed apart by hand.
+    for d, i, colour, dy in ((phys, ip, BLUE, 8), (tri, it, GREEN, -10),
+                             (splat, isp, ORANGE, -3)):
+        ax.annotate(f"{d['env_steps_per_sec'][i][i_max]:,.0f}",
+                    xy=(n_top, d["env_steps_per_sec"][i][i_max]),
+                    xytext=(7, dy), textcoords="offset points",
+                    fontsize=8.5, color=colour, fontweight="bold")
+
+    ax.set_ylabel("throughput (env-steps / s)")
+    ax.set_xlim(0.75, n_top * 3.2)
+    titles(
+        ax,
+        f"Touch is now nearly free: {cost_tri[i_max]:.2f}× at N = {n_top:,.0f}, "
+        f"down from {cost_torch[i_max]:.2f}×",
+        f"fused timing (no inner synchronisation) · the Triton curve rejoins the no-touch curve · "
+        f"{gain[i_max]:.2f}× over the torch encoder at N = {n_top:,.0f}\n"
+        + setup_note(tri),
+    )
+    ax.legend(frameon=False, fontsize=9, loc="upper left")
+    save(fig, "E_touch_is_free.png")
+
+
+# --------------------------------------------------------------------------- #
+# F. Encoder cost, three ways
+# --------------------------------------------------------------------------- #
+
+
+def fig_f(kern):
+    """Encoder-only ms/call for eager, torch.compile and Triton.
+
+    `torch.compile` is on the plot because it is the honest baseline: it is one
+    line of code, it changes no arithmetic, and any kernel that cannot beat it
+    was not worth writing.
+    """
+    n = kern["num_envs"]
+    i_max = int(np.argmax(n))
+    n_top = n[i_max]
+
+    fig, ax = plt.subplots(figsize=(7.0, 4.6))
+    # This sweep's rungs are a subset of the end-to-end ladder, so label the rungs
+    # it actually has rather than the shared tick set.
+    style_axes(ax, logy=True, xticks=[int(v) for v in n])
+
+    ax.plot(n, kern["eager_ms"], color=ORANGE, lw=2.0, ls="--", marker="s", ms=5.5,
+            label="dense torch encoder (eager)")
+    ax.plot(n, kern["compile_ms"], color=SKY, lw=2.0, ls=(0, (1, 1.4)), marker="v",
+            ms=5.5, label="same encoder, torch.compile")
+    ax.plot(n, kern["triton_ms"], color=GREEN, lw=2.0, ls=(0, (5, 1, 1, 1)),
+            marker="^", ms=6.0, label="Triton two-pass gather kernel")
+
+    for key, colour in (("eager_ms", ORANGE), ("compile_ms", SKY),
+                        ("triton_ms", GREEN)):
+        ax.annotate(f"{kern[key][i_max]:,.3g} ms", xy=(n_top, kern[key][i_max]),
+                    xytext=(7, -3), textcoords="offset points",
+                    fontsize=8.5, color=colour, fontweight="bold")
+
+    ax.annotate(
+        f"{kern['speedup_vs_eager'][i_max]:,.0f}× vs eager\n"
+        f"{kern['speedup_vs_compile'][i_max]:,.0f}× vs torch.compile",
+        xy=(n_top, kern["triton_ms"][i_max] * 6.0),
+        xytext=(-12, 0), textcoords="offset points",
+        fontsize=9, color="black", ha="right", va="center", fontweight="bold",
+    )
+
+    ax.set_ylabel("encoder time per call (ms)")
+    ax.set_xlim(n[0] * 0.7, n_top * 3.6)
+    titles(
+        ax,
+        f"Encoder cost at N = {n_top:,.0f}: {kern['eager_ms'][i_max]:.1f} ms → "
+        f"{kern['compile_ms'][i_max]:.1f} ms → {kern['triton_ms'][i_max]:.3f} ms",
+        f"encoder only, synthetic contacts at the {kern['contacts_per_env_cap'][i_max]:.0f}-slot budget, "
+        f"{kern['n_taxels'][i_max]:.0f} taxels · torch.compile is a one-line change and gives "
+        f"{kern['compile_speedup_vs_eager'][i_max]:.2f}×\n"
+        f"modelled traffic {kern['eager_bytes_mb'][i_max]:,.0f} MB → "
+        f"{kern['triton_bytes_mb'][i_max]:,.0f} MB against a "
+        f"{kern['floor_bytes_mb'][i_max]:,.0f} MB compulsory floor · runtime is data-dependent "
+        f"(see README)",
+    )
+    ax.legend(frameon=False, fontsize=9, loc="upper left")
+    save(fig, "F_encoder_three_ways.png")
+
+
+# --------------------------------------------------------------------------- #
+# G. The migration, undone
+# --------------------------------------------------------------------------- #
+
+
+def fig_g(splat, tri, kern):
+    """Figure A with the Triton stage added: the encoder never overtakes physics.
+
+    Also carries the second migration. The Triton *stage* line sits well above
+    the Triton *kernel* line, and the difference is pre-processing.
+    """
+    n = splat["num_envs"]
+    p_ms = splat["physics_ms_per_step"]
+    e_ms = splat["encoder_ms_per_step"]
+    xover = crossover_n(splat)
+    i_max = int(np.argmax(n))
+
+    tn = tri["num_envs"]
+    t_ms = tri["encoder_ms_per_step"]
+    j_max = int(np.argmax(tn))
+    peak_share = 100.0 * np.nanmax(tri["encoder_frac"])
+    crossed = np.any(t_ms > tri["physics_ms_per_step"])
+
+    # Second migration: the kernel is only part of the stage. Both numbers are
+    # measured; the split between them is inferred from the pair, not instrumented.
+    kn, (ik, it) = align(kern, tri)
+    k_ms = kern["triton_ms"][ik]
+    stage_ms = tri["encoder_ms_per_step"][it]
+    pre_frac = 100.0 * (1.0 - k_ms[-1] / stage_ms[-1])
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    style_axes(ax, logy=True)
+
+    ax.axvspan(xover, n[i_max] * 1.35, color=ORANGE, alpha=0.06, lw=0)
+
+    ax.plot(n, p_ms, color=BLUE, lw=2.0, marker="o", ms=5.5,
+            label="physics step (MuJoCo Warp)")
+    ax.plot(n, e_ms, color=ORANGE, lw=2.0, ls="--", marker="s", ms=5.5,
+            label="torch splat encoder")
+    ax.plot(tn, t_ms, color=GREEN, lw=2.0, ls=(0, (5, 1, 1, 1)), marker="^", ms=6.0,
+            label="Triton tactile stage (kernel + pre-processing)")
+    ax.plot(kn, k_ms, color=GREEN, lw=1.4, ls=":", marker="D", ms=4.0, alpha=0.85,
+            label="Triton kernel alone")
+
+    ax.axvline(xover, color=GREY, lw=1.0, ls=":", zorder=1)
+    ax.annotate(f"old crossover\nN = {xover:,.0f}", xy=(xover, e_ms[i_max]),
+                xytext=(4, 0), textcoords="offset points",
+                fontsize=8.5, color=GREY, ha="left", va="center")
+
+    ax.annotate(f"{e_ms[i_max]:.0f} ms", xy=(n[i_max], e_ms[i_max]),
+                xytext=(6, 2), textcoords="offset points",
+                fontsize=8.5, color=ORANGE, fontweight="bold")
+    ax.annotate(f"{p_ms[i_max]:.0f} ms", xy=(n[i_max], p_ms[i_max]),
+                xytext=(6, -2), textcoords="offset points",
+                fontsize=8.5, color=BLUE, fontweight="bold")
+
+    # The gap between the two green lines is the second migration.
+    ax.annotate(
+        "", xy=(kn[-1], stage_ms[-1]), xytext=(kn[-1], k_ms[-1]),
+        arrowprops=dict(arrowstyle="<->", color=GREEN, lw=0.9, shrinkA=2, shrinkB=2),
+    )
+    # Placed in the empty band under the physics line rather than beside the
+    # arrow: a label there would sit on top of both green curves.
+    ax.text(n[0] * 1.06, (e_ms[0] * p_ms[0]) ** 0.5,
+            f"at N = {kn[-1]:,.0f}: {stage_ms[-1]:.2f} ms stage,\n"
+            f"{k_ms[-1]:.2f} ms kernel → ~{pre_frac:.0f}% of the\n"
+            f"tactile stage is pre-processing\n(inferred, not instrumented)",
+            fontsize=8.5, color="black", ha="left", va="center", linespacing=1.35)
+
+    ax.set_ylabel("time per simulation step (ms)")
+    ax.set_xlim(0.75, n[i_max] * 2.4)
+    titles(
+        ax,
+        ("The migration is undone: the Triton stage never overtakes physics"
+         if not crossed else
+         "The Triton stage still overtakes physics at some N"),
+        f"per-stage split, measured with a synchronisation between the physics step and the encoder · "
+        f"the Triton stage peaks at {peak_share:.1f}% of step time\n"
+        + setup_note(tri),
+    )
+    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    save(fig, "G_migration_undone.png")
+
+
+# --------------------------------------------------------------------------- #
+# H. Amdahl
+# --------------------------------------------------------------------------- #
+
+
+def fig_h(phys, splat, tri, kern):
+    """End-to-end speedup vs encoder speedup, against the ceiling.
+
+    The ceiling and the curve come from the *pre-kernel* encoder share, which was
+    registered before the kernel existed. The measured point comes from the two
+    fused-timing sweeps. They agree, which is the check worth having.
+    """
+    frac = float(splat["encoder_frac"][int(np.argmax(splat["num_envs"]))])
+    n_top = float(np.max(splat["num_envs"]))
+    ceiling = 1.0 / (1.0 - frac)
+
+    k_i = int(np.argmax(kern["num_envs"]))
+    s_triton = float(kern["speedup_vs_eager"][k_i])
+    s_compile = float(kern["compile_speedup_vs_eager"][k_i])
+
+    common, (isp, it) = align(splat, tri)
+    measured = float(tri["env_steps_per_sec"][it][-1]
+                     / splat["env_steps_per_sec"][isp][-1])
+
+    xs = np.logspace(0, np.log10(s_triton * 3.0), 400)
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+
+    ticks = [1, 2, 5, 10, 30, 100, int(round(s_triton))]
+    style_axes(ax, xlabel="encoder speedup over the eager torch encoder (×)",
+               logx=True, logy=False, logbase=10,
+               xticks=ticks, xticklabels=[f"{t:g}×" for t in ticks])
+
+    ax.plot(xs, amdahl(frac, xs), color=GREY, lw=1.8,
+            label=f"Amdahl, encoder = {100 * frac:.1f}% of step time")
+    ax.axhline(ceiling, color="black", lw=1.2, ls=(0, (4, 3)))
+    ax.text(1.05, ceiling - 0.13, f"ceiling {ceiling:.2f}× — an infinitely fast encoder",
+            fontsize=9, color="black", va="top", fontweight="bold")
+
+    # The three points that make the diminishing-returns argument.
+    marks = [
+        (s_compile, f"torch.compile alone:\n{s_compile:.2f}× kernel → {amdahl(frac, s_compile):.2f}× end to end",
+         SKY, 10, -22),
+        (30.0, f"hypothetical 30×\n→ {amdahl(frac, 30.0):.2f}×", GREY, -6, -34),
+        (s_triton, f"this kernel, {s_triton:.0f}×\n→ {amdahl(frac, s_triton):.2f}× predicted", GREEN, -8, -40),
+    ]
+    for x, label, colour, dx, dy in marks:
+        y = float(amdahl(frac, x))
+        ax.plot([x], [y], marker="o", ms=8, mfc="white", mec=colour, mew=2.0, zorder=5)
+        ax.annotate(label, xy=(x, y), xytext=(dx, dy), textcoords="offset points",
+                    fontsize=8.5, color="black", ha="right" if dx < 0 else "left",
+                    arrowprops=dict(arrowstyle="-", color=colour, lw=0.8,
+                                    shrinkA=0, shrinkB=6))
+
+    ax.plot([s_triton], [measured], marker="*", ms=16, color=GREEN, zorder=6)
+    ax.annotate(f"measured end to end: {measured:.2f}×\n"
+                f"{100 * measured / ceiling:.0f}% of what was available",
+                xy=(s_triton, measured), xytext=(-10, 26), textcoords="offset points",
+                fontsize=9, fontweight="bold", ha="right",
+                arrowprops=dict(arrowstyle="-", color=GREEN, lw=0.8, shrinkA=0, shrinkB=8))
+
+    gap = float(amdahl(frac, s_triton) - amdahl(frac, 30.0))
+    ax.set_ylim(0, ceiling * 1.28)
+    ax.set_xlim(0.95, s_triton * 3.0)
+    ax.set_ylabel("end-to-end speedup (×)")
+    titles(
+        ax,
+        f"Amdahl is the constraint, not the kernel: {measured:.2f}× against a "
+        f"{ceiling:.2f}× ceiling",
+        f"ceiling and curve from the encoder's {100 * frac:.1f}% share at N = {n_top:,.0f}, registered "
+        f"before the kernel existed\n"
+        f"a {s_triton:.0f}× kernel and a hypothetical 30× kernel land {gap:.2f}× apart end to end",
+    )
+    ax.legend(frameon=False, fontsize=9, loc="lower right")
+    save(fig, "H_amdahl.png")
 
 
 # --------------------------------------------------------------------------- #
@@ -356,22 +680,49 @@ def main() -> int:
 
     phys = load(PHYSICS_CSV)
     splat = load(SPLAT_CSV)
+    tri = load(TRITON_CSV)
+    kern = load(KERNEL_CSV)
 
     fig_a(phys, splat)
     fig_b(phys, splat)
     fig_c(phys, splat)
     fig_d(phys, splat)
+    fig_e(phys, splat, tri)
+    fig_f(kern)
+    fig_g(splat, tri, kern)
+    fig_h(phys, splat, tri, kern)
 
     # Echo the derived headline numbers so a figure can be checked against the
     # CSVs without opening a PNG.
-    common, ip, isp = matched(phys, splat)
+    common, (ip, isp, it) = align(phys, splat, tri)
     slow = phys["env_steps_per_sec"][ip] / splat["env_steps_per_sec"][isp]
-    top = 100.0 * splat["encoder_frac"][-1]
-    print(f"\ncrossover N            = {crossover_n(splat):,.0f}")
-    print(f"linear knee (physics)  = {linear_knee(phys):,.0f}")
-    print(f"encoder share at N={splat['num_envs'][-1]:,.0f} = {top:.1f}%")
-    print(f"Amdahl ceiling         = {1.0 / (1.0 - top / 100.0):.2f}x")
-    print(f"slowdown at N={common[-1]:,.0f}     = {slow[-1]:.2f}x")
+    slow_tri = phys["env_steps_per_sec"][ip] / tri["env_steps_per_sec"][it]
+    e2e = tri["env_steps_per_sec"][it] / splat["env_steps_per_sec"][isp]
+    frac = float(splat["encoder_frac"][-1])
+    ceiling = 1.0 / (1.0 - frac)
+    k = int(np.argmax(kern["num_envs"]))
+    stage = float(tri["encoder_ms_per_step"][it][-1])
+    kernel = float(kern["triton_ms"][k])
+
+    print(f"\ncrossover N (torch)       = {crossover_n(splat):,.0f}")
+    print(f"linear knee (physics)     = {linear_knee(phys):,.0f}")
+    print(f"encoder share at N={common[-1]:,.0f}  = {100 * frac:.1f}%  (torch)")
+    print(f"                          = {100 * tri['encoder_frac'][it][-1]:.1f}%  (Triton)")
+    print(f"Amdahl ceiling            = {ceiling:.2f}x")
+    print(f"cost of touch at N={common[-1]:,.0f} = {slow[-1]:.2f}x -> {slow_tri[-1]:.2f}x")
+    print(f"end-to-end gain           = {e2e[-1]:.2f}x  "
+          f"({100 * e2e[-1] / ceiling:.0f}% of the ceiling)")
+    print(f"kernel at N={kern['num_envs'][k]:,.0f}         = "
+          f"{kern['triton_ms'][k]:.3f} ms  "
+          f"({kern['speedup_vs_eager'][k]:.0f}x eager, "
+          f"{kern['speedup_vs_compile'][k]:.0f}x torch.compile)")
+    print(f"torch.compile alone       = {kern['compile_speedup_vs_eager'][k]:.2f}x  "
+          f"(-> {amdahl(frac, kern['compile_speedup_vs_eager'][k]):.2f}x end to end)")
+    print(f"Amdahl: 30x kernel        = {amdahl(frac, 30.0):.2f}x  vs "
+          f"{amdahl(frac, kern['speedup_vs_eager'][k]):.2f}x at "
+          f"{kern['speedup_vs_eager'][k]:.0f}x")
+    print(f"tactile stage vs kernel   = {stage:.3f} ms vs {kernel:.3f} ms  "
+          f"({100 * (1 - kernel / stage):.0f}% pre-processing, inferred)")
     return 0
 
 

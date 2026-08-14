@@ -36,7 +36,7 @@ FIELDS = [
     "num_envs", "tactile", "ok", "env_steps_per_sec", "us_per_env_step",
     "ms_per_step", "peak_rss_gb", "rss_after_alloc_gb", "gb_per_env_mb",
     "setup_s", "warmup_s", "wall_s", "steps", "device",
-    "contacts", "contacts_per_env", "overflow_worlds", "naconmax_total", "njmax_actual",
+    "sim_dt", "contacts", "contacts_per_env", "overflow_worlds", "naconmax_total", "njmax_actual",
     "physics_ms_per_step", "encoder_ms_per_step", "encoder_frac", "torch_peak_gb",
     "dropped_contacts", "active_taxels_world0", "note",
 ]

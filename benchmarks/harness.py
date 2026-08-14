@@ -89,6 +89,13 @@ NJMAX_PER_ENV = 120
 
 # The hand must actually be gripping, or the benchmark times a contact-free
 # scene and tells you nothing about contact cost.
+# Match leapXelaMjLab's env_cfg.py: sim_dt=0.01 (ctrl_dt=0.05, decimation=5).
+# The scene we load includes leapXela_generated_mjx.xml, which declares
+# timestep=0.001 -- 10x smaller than what the supervisor actually trains at.
+# Left uncorrected, our env-steps/s would not be comparable to his training
+# throughput (10x more steps for the same simulated robot time).
+SIM_DT = 0.01
+
 CLOSE_FRACTION = 0.6
 SETTLE_STEPS = 250   # CPU run shows first cube contact ~step 120
 
@@ -547,6 +554,7 @@ def main() -> int:
     print(f"[harness] N={n} scene={args.scene.name} tactile={tactile}", file=sys.stderr)
 
     mjm = build_scene_model(args.scene, tactile)
+    mjm.opt.timestep = SIM_DT
     mjd = mj.MjData(mjm)
     mj.mj_forward(mjm, mjd)
 
@@ -656,6 +664,7 @@ def main() -> int:
         steps=args.steps,
         warmup=args.warmup,
         scene=args.scene.name,
+        sim_dt=float(mjm.opt.timestep),
         nconmax_per_env=NCONMAX_PER_ENV,
         njmax_per_env=NJMAX_PER_ENV,
         naconmax_total=int(d.naconmax),

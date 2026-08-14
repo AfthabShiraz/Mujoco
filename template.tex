@@ -1,0 +1,1162 @@
+% v3 follow-up draft (updated)
+\documentclass[journal]{IEEEtran}
+
+
+\usepackage{ifpdf}
+\usepackage{multirow}
+\usepackage
+{booktabs}
+\usepackage{multicol}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage[normalem]{ulem}
+\usepackage{xcolor}
+\ifCLASSINFOpdf
+  \usepackage[pdftex]{graphicx}
+\else
+  \usepackage[dvips]{graphicx}
+\fi
+\graphicspath{{figures/Followup/}{cmd_repro/figures/}{figures/}}
+\usepackage{amsmath}
+\usepackage{amssymb} 
+% \usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{array}
+\usepackage{float}
+\ifCLASSOPTIONcompsoc
+ \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\else
+ \usepackage[caption=false,font=footnotesize]{subfig}
+\fi
+\usepackage{fixltx2e}
+\usepackage{stfloats}
+\ifCLASSOPTIONcaptionsoff
+ \usepackage[nomarkers]{endfloat}
+\let\MYoriglatexcaption\caption
+\renewcommand{\caption}[2][\relax]{\MYoriglatexcaption[#2]{#2}}
+\fi
+
+\usepackage{url}
+
+\begin{document}
+
+% \title{Robotic Simultaneous Recognition of Stiffness and Texture of Deformable Objects using a Novel Magnetic-based Cilia Tactile Sensor}
+
+%\title{Simultaneous Recognition of Stiffness and Texture of Deformable Objects with a Single Robot Grasp using a Ciliated Magnetic Dome (CMD) Tactile Sensor}
+
+\title{Simultaneous Recognition of Stiffness and Texture from a Single Grasp on a High-Density Flat Tactile Array under Imprecise Robot Positioning}
+
+%\title{Single-Grasp Recognition of Stiffness and Texture Using a Ciliated Magnetic Dome (CMD) Sensor}
+
+\author{Authors' names withheld for blind review}%
+
+%\author{Daryn Kenzhebek*$^{1,2}$, Ivo Kosa*$^{1}$, Zhifei Chen*$^{1}$, Gabriele Giudici$^{1}$, Yue Li$^{1}$, Thilina Dulantha Lalitharatne$^{4}$, Josie Hughes$^{5}$, Susana Cardoso$^{3}$, Zhanat Kappassov$^{2}$, and Lorenzo Jamone$^{1}$% <-this % stops a space
+%
+
+%\thanks{This work was partially supported by ARIA (project MagTecSkin) through the Robot Dexterity program.}% <-this % stops a space
+%
+
+%\thanks{$^{1}$Zhifei Chen, Ivo Kosa, Gabriele Giudici, Yue Li, Lorenzo Jamone are with the Department of Computer Science, University College London, United Kingdom.{\tt\small \{zhifei.chen.23, ivo.kosa.24, g.giudici, yue-li, l.jamone\}@ucl.ac.uk}}%
+%
+
+%\thanks{$^{2}$Daryn Kenzhebek, and Zhanat Kappassov are with the Institute of Smart Systems and Artificial Intelligence and Robotics Department, Nazarbayev University, Kazakhstan.{\tt\small \{daryn.kenzhebek, zhkappassov\}@nu.edu.kz}}%
+%
+
+%\thanks{$^{3}$Susana Cardoso is with INESC Microsistemas e Nanotecnologias and with the Department of Physics, Instituto Superior Tecnico, University of Lisbon, Portugal.{\tt\small \{scardoso\}@inesc-mn.pt}}%
+%
+
+%\thanks{$^{4}$Thilina Dulantha Lalitharatne is with the School of Engineering and Materials Science, Queen Mary University of London, United Kingdom.{\tt\small \{t.lalitharatne\}@qmul.ac.uk}}%
+%
+
+%\thanks{$^{5}$Josie Hughes is with the School of Engineering, EPFL, Switzerland.{\tt\small \{josie.hughes\}@epfl.ch}}%
+%\thanks{* Contributed equally}% <-this % stops a space
+%
+
+%}
+
+\maketitle
+
+
+
+\begin{abstract}
+%
+ Recognising the texture and stiffness of soft objects from a single grasp, without dedicated sliding or rubbing motions, is a useful skill for robots that handle delicate items such as fruits. Prior work showed that this simultaneous recognition is possible with a ciliated magnetic dome tactile sensor mounted on a high-precision robot arm. In this letter we study the same single-grasp task on a different platform: a denser flat tactile array (uSkin, 32 taxels and 96 channels) and a lower-precision Sawyer arm, using a purpose-built control set that raises the grasp height while keeping the object fixed. In distribution, the stronger models reach near-ceiling combined accuracy (about 0.99), reproducing the prior in-distribution result. Out of distribution the gap decomposes: a vertical grasp-height raise, rather than the lateral grasp pattern, accounts for almost the entire collapse, with texture recognition fragile and stiffness recognition robust. We establish the raise as a direction from the accuracy and signal changes, not as a metadata-verified magnitude. We attribute the collapse to a contact-condition and sensor-registration covariate shift rather than to lost information, since texture is recoverable to about 0.70 by training and testing within the raised set. Ablations show that the denser array buys resolution but not out-of-distribution robustness, and a memorisation gap, larger for the deep models, indicates that the in-distribution ceiling is partly near-duplicate memorisation. These findings characterise how single-grasp texture and stiffness recognition behaves under imprecise robot positioning.
+ %
+\end{abstract}
+
+% Note that keywords are not normally used for peerreview papers.
+\begin{IEEEkeywords}
+Tactile sensing, Stiffness recognition, Texture Recognition, Deformable objects, Out-of-distribution generalisation.
+\end{IEEEkeywords}
+
+\IEEEpeerreviewmaketitle
+%
+\section{Introduction}
+%
+%
+\IEEEPARstart{T}{actile} sensing has shown great potential for dexterous robotic manipulation, with advancements in sensor design, perception algorithms, and robot--environment interaction~\cite{luo2025tactile}, enabling machines to safely interact with unstructured environments and assess the physical properties of objects. One important objective of tactile sensing is to complement computer vision technologies in order to retrieve object properties~\cite{navarro2023visuo}, especially those that cannot be perceived well by vision or other sensing modalities, such as object stiffness~\cite{Nam2024shRegression} or texture~\cite{yu2025recentProgressTexHumanoid}. Humans employ specific Exploratory Procedures (EPs) to perceive different object properties~\cite{LEDERMAN199329}, e.g., squeezing an object to estimate its stiffness or rubbing and sliding fingers across it to estimate surface texture. Analogous EPs have been implemented on robots~\cite{chu2013explorProcHaptic,kirby2022dynamExplore}; however, relying on multiple, distinct dynamic motions increases task execution time and limits efficiency, particularly in autonomous grasping scenarios where a stable hold must be maintained.
+%
+%
+%
+Recovering both texture and stiffness from a single grasp, without dedicated sliding or rubbing, removes that cost. Prior work established that this is feasible: a ciliated magnetic dome tactile sensor mounted on a high-precision arm recognised stiffness and texture simultaneously from one grasp on a set of fruit-like soft objects~\cite{cmd_source}.
+That result leaves open how the same single-grasp task behaves once the platform changes. Two changes matter for deployment. First, the sensor: a denser flat tactile array has more taxels and finer spatial sampling than a sparse ciliated dome, so it is natural to ask whether the extra resolution helps recognition and, more importantly, whether it helps the system tolerate imperfect grasps. Second, the arm: many practical manipulators do not place the gripper as precisely as a high-end research arm, so the grasp that a model sees at test time is rarely the grasp it was trained on.
+%
+%
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.72\columnwidth]{rig_setup.jpg}
+    \caption{Experimental setup for this study: a uSkin flat magnetic tactile array (32 taxels, 96 channels) mounted on a parallel gripper carried by a Sawyer arm, grasping a fixed soft object held in a printed holder.}
+    \label{fig:setup}
+\end{figure}
+%
+%
+%
+In this letter we take the single-grasp simultaneous recognition task to a different platform (see Fig.~\ref{fig:setup}): a denser flat tactile array (uSkin, 32 taxels and 96 channels) and a lower-precision Sawyer arm, in place of the sparse ciliated dome and the high-precision arm used in the prior work. We keep the same recognition problem, 30 soft objects combining 5 stiffness levels and 6 texture patterns ($5 \times 6 = 30$), and we ask two questions that the prior study could not: what kind of grasp shift breaks recognition, and which property fails first. To answer them, the data were collected as a graded set of grasp conditions, including a purpose-built control that raises the grasp height while keeping the object fixed, which is intended to separate a change in grasp height from a change in the lateral grasp pattern.
+%
+%
+Our central finding is that the out-of-distribution gap is not monolithic: it decomposes, and a vertical grasp-height raise accounts for almost the entire collapse, while the change in lateral grasp pattern contributes little. Under that raise, texture recognition is fragile and stiffness recognition is robust. We read this as a contact-condition and sensor-registration covariate shift rather than a loss of information, because texture becomes recoverable again once training and testing happen within the raised condition. We contribute:
+%
+\begin{enumerate}
+    \item We replicate single-grasp simultaneous texture and stiffness recognition on a denser flat tactile array and a lower-precision arm; in distribution the strong models reach near-ceiling combined accuracy, reproducing and slightly exceeding the prior in-distribution result.
+    \item Using a purpose-built raised-grasp control, we decompose the out-of-distribution gap and show that a vertical grasp-height raise dominates the collapse, with texture fragile and stiffness robust. We establish the raise as a direction, not as a metadata-verified magnitude.
+    \item We attribute the failure to a contact-condition and sensor-registration covariate shift: texture is recoverable within the raised set, so the failure is one of transfer, not of lost information.
+    \item We show that a denser sensor buys resolution rather than out-of-distribution robustness, that signal directionality carries texture (removing it cripples texture but spares stiffness for the classical models, replicating the prior aggregation ablation on a new sensor), and, more tentatively, that the deep models recover texture from magnitude alone.
+    \item We quantify a memorisation gap between a random and a group-aware data split, larger for the deep models, which implies that near-duplicate memorisation inflates the in-distribution ceiling under any random-split protocol, including the prior work's.
+\end{enumerate}
+%
+%
+
+
+
+%
+\section{State of the Art}
+\label{sec:SOTA}
+%
+Tactile sensing spans several transduction technologies, including resistive~\cite{zhu2022recent}, capacitive~\cite{niu2025morphological}, impedance-based~\cite{cui2023recent}, and camera-based~\cite{li2025classification} designs. Our focus is magnetic sensing, which detects local field variations caused by the deformation of a soft magnetised structure~\cite{man2022recent}. A common design embeds small magnets in a dome-shaped elastomer tracked by tri-axial Hall-effect sensors~\cite{tomo2018uSkin}; it measures three-axis contact force robustly and has been used for object recognition, slip detection, stiffness estimation, and manipulation~\cite{kirby2022dynamExplore,funabashi24tacObjRec,zenha21slip,giudici2025haptStiffPercep,mao2024dexskills}. A related approach distributes magnetic microparticles throughout an elastomer skin rather than using discrete magnets~\cite{hellebrekers20reskin}. A second design uses magnetised cilia, which capture fine surface texture and reach high accuracy in fruit-ripeness assessment~\cite{ribeiro2017bioCiliaSensor,ribeiro2020tacFruitAssess}, though typically through sliding or scanning motions.
+%
+
+%
+Texture and stiffness are usually recognised separately~\cite{luo2025tactile,jiang2022robotic,yu2025recent}. Stiffness is read from compressive contact, using piezoelectric arrays, vision-based sensors, or contact-electrification and pneumatic schemes~\cite{amin2023embedded,sharma2025mechanoreceptor,li2024assessing,li2025soft,al2025artificially}, whereas texture typically requires sliding or scanning to expose friction and vibration cues~\cite{zheng2025bionic,cao2024multimodal}. The few systems that recover both properties at once still rely on dedicated exploratory motions such as sliding, vibration, or knocking~\cite{guo2025multimodal,qiu2024quantitative}.
+%
+
+%
+%Unlike these single-property or sequential approaches that require dedicated and often dynamic exploratory procedures, our study introduces a novel tactile sensor design that enables the simultaneous recognition of stiffness and texture with a single robot grasp.
+%
+Recovering both stiffness and texture from a single grasp, without any sliding, rubbing, or auxiliary sensing modality, sets the problem we study apart from all of the approaches above.
+%
+
+%
+This single-grasp capability was first established by prior work using a ciliated magnetic dome tactile sensor~\cite{cmd_source}. That sensor combined magnetised cilia, which encode fine-scale texture, with a soft dome whose bulk deformation encodes stiffness, so that both properties could be recognised simultaneously from a single static grasp on a high-precision arm. Evaluated on 30 fruit-like soft objects spanning 5 stiffness levels and 6 textures, it reached about 94.6\% in-distribution combined accuracy and degraded gracefully out of distribution, to about 81\% texture and 70\% stiffness, under lateral shifts of the grasp position. We build on that result on a different platform: in place of a sparse ciliated dome we adopt a denser flat magnetic array of the uSkin type~\cite{tomo2018uSkin,funabashi24tacObjRec}, and we characterise how single-grasp texture and stiffness recognition behaves on this array under imprecise robot positioning.
+
+
+%
+\section{Sensor and Experimental Setup}
+\label{sec:Setup}
+%
+Our tactile sensor is a uSkin flat magnetic tactile array. It provides 32 contact taxels, taxels 1 to 16 on the first finger and taxels 17 to 32 on the second, and each taxel reports three-axis magnetic field measurements (X, Y, Z), for a total of 96 channels. The two taxel patches are mounted on the two opposing fingers of a parallel gripper, which is carried by a Rethink Robotics Sawyer arm (see Fig.~\ref{fig:setup}). The object to be recognised is held fixed in a 3D-printed holder in a predefined position, and each trial is a single static grasp of that object. Fig.~\ref{fig:taxels} shows the taxel layout across the two fingers.
+%
+
+%
+Each grasp is recorded at 100~Hz and centre-cropped to a 2.5~s window that excludes the no-contact parts of the motion, yielding a fixed tensor of 250 timesteps by 96 channels (a $250 \times 96$ array) per grasp. % TODO(setup): the gripper close, hold, and open motion sequence can be added here if encoder-position detail is wanted; it is not fixed by the ledger.
+%
+
+%
+Unlike the ciliated magnetic dome of the prior work~\cite{cmd_source}, our array is flat: it has no cilia and no dome, so it does not separate texture from stiffness in hardware. Both cues must instead be read from the same taxel responses. The Sawyer is also a lower-precision arm than the high-precision arm used in the prior study, so it places the gripper less repeatably from grasp to grasp. This is the imprecise-positioning regime we set out to study, in which the grasp a model sees at test time is rarely exactly the grasp it was trained on.
+%
+
+%
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.99\columnwidth]{taxel_map.png}
+\caption{Layout of the 32 contact taxels of the uSkin array: taxels 1 to 16 on the first finger and taxels 17 to 32 on the second, each reporting three axes (X, Y, Z) for 96 channels in total. Shaded taxels mark the 8-taxel, 24-channel subsample used later in the density ablation, namely four evenly spaced taxels per finger (taxels 1, 5, 9, 13 on the first finger and 17, 21, 25, 29 on the second).}
+\label{fig:taxels}
+\end{figure}
+%
+
+
+\section{Methodology}
+\label{sec:Methodology}
+
+\subsection{Soft Object Design and Fabrication}
+\label{Methodology:Soft_Object_Fabrication}
+%
+%To evaluate the simultaneous texture and stiffness recognition capabilities of the CMD sensor,
+%
+%
+Informed by fruit studies \cite{an20strawberries,perkins1996cultivar, giongo19raspberries, jentzsch2022citrus}, soft materials analysis \cite{hattab2020softMat}, and insights from robotic harvesting \cite{navas2021robHarv}, we created a custom set of 30 soft objects combining five different stiffnesses and six different textures, intended to approximate some of the physical properties observed in real fruits. This is the same 30-object set (5 stiffnesses $\times$ 6 textures) used by the prior work~\cite{cmd_source}; we reuse its design so that our results are directly comparable.
+%
+The objects were manufactured by casting silicone mixtures into 3D-printed molds, forming vertical cuboids with overall dimensions of $25.5 \times 25.5 \times 40.5$~mm, with the lower $15~mm$ of each cuboid acting as a texture-less margin used to rigidly clamp the sample within a 3D-printed holder.
+
+%
+%
+%
+%To span a realistic range of fruit-like stiffnesses, 
+%
+To obtain different stiffnesses, the objects were cast using five commercial silicone compounds (Smooth-On, Inc., USA) with varying Shore Hardness (SH) parameters. Following the stiffness categorisation established in~\cite{giudici2025haptStiffPercep}, we used Ecoflex\textsuperscript{TM} 00-10 (SH: 00-10), 00-30 (SH: 00-30), and 00-50 (SH: 00-50) for the \textit{Very-Soft}, \textit{Soft}, and \textit{Medium} stiffnesses, and Dragon Skin\textsuperscript{TM} 20 (SH: A-20) and 30 (SH: A-30) for the \textit{Hard} and \textit{Very-Hard} stiffnesses. 
+%
+As for the textures, four of them are inspired by fruits (strawberry, citrus, raspberry, and blackberry surfaces), and the other two are a smooth and a rough baseline, for six textures in total.
+%
+%The cross-combination of these six textures and five stiffness levels yields a total of 30 unique test samples, providing a comprehensive experimental set for the dual-classification task. For identification, each object is encoded according to its specific texture and stiffness profile, as detailed in Table~\ref{table:Encoded_names}.
+%
+%
+%
+%
+
+%
+%The objects were manufactured by casting the silicone mixtures into 3D-printed molds, forming vertical cuboids with overall dimensions of $25.5 \times 25.5 \times 40.5$~mm.
+%
+%As shown in Fig.~\ref{fig:grasp_configurations_textures}b, the selected texture pattern is applied exclusively to a $25.5 \times 25.5$~mm square area on the upper portion of two opposite faces. The lower 15~mm of each cuboid acts as a smooth, texture-less margin used to rigidly clamp the sample within a 3D-printed holder. This ensures stability during the robotic grasping experiments while leaving the textured regions fully exposed for interaction with the CMD sensors.
+%Despite the diversity of surface topologies, the molds were designed to maintain the maximum peak-to-peak distance between the opposing textured faces at a constant $25.5$~mm. This guarantees a uniform object width across all samples, ensuring that the gripper's closing trajectory and the resulting baseline compressive forces are strictly dependent on the material's stiffness and not biased by geometric size variations.
+%
+
+
+%
+\subsection{Classification Models for Dual-Property Recognition}
+\label{Methodology:Classification_Models}
+%
+%The primary objective of this study is to simultaneously classify the surface texture and stiffness of deformable objects from a single robotic grasp. We rely exclusively on a single sensing modality: the 24-channel magnetic time-series generated by the dual CMD sensor setup. To comprehensively evaluate the feasibility and limitations of this single-grasp dual-property recognition, 
+%
+%
+We train four dual-head classifiers. Each takes a single grasp and predicts both stiffness (5 classes) and texture (6 classes), and we score a grasp combined-correct only when both heads are correct, so chance for the combined label is about $1/30$. The four models span two families and cover the range of the prior work's models, from its weakest (Naive Bayes) to its strongest (InceptionTime). They are four of the prior work's eight models; we did not implement the other four.
+%
+The two classical models (Naive Bayes and SVM) work on a fixed feature vector rather than the raw series. For each of the 96 channels we take six summary statistics (mean, standard deviation, minimum, maximum, last value, and slope), giving a 576-dimensional vector per grasp. On this vector we train a Gaussian Naive Bayes classifier and an RBF-kernel SVM ($C=10$, $\gamma=\mathrm{scale}$), one classifier per head.
+%
+%Naive Bayes, Support Vector Machines (SVM), Convolutional Neural Networks (CNN), Convolutional Autoencoder (CAE), InceptionTime, XceptionTime, CNN + Long Short Time Memory (LSTM), LSTM + SVM.
+%
+%
+%
+%For the two traditional classifiers (i.e., \textbf{Naive Bayes} and \textbf{SVM}), the temporal sequence is flattened, and the problem is simplified into a single multi-class classification task with 30 unique texture-stiffness combinations classes. 
+%
+%Conversely, the other six approaches are designed to directly process the spatio-temporal data. These models employ a shared feature extraction backbone followed by two parallel classification heads: one dedicated to texture (6 classes) and the other to stiffness (5 classes).
+% 
+%
+%These include:
+%
+
+The two deep models (a 1D-CNN and InceptionTime) instead read the full $250 \times 96$ sequence (Sec.~\ref{sec:Setup} defines this tensor). The 1D-CNN uses three convolutional blocks (about 137{,}000 parameters); InceptionTime uses six multi-scale inception modules with residual connections (about 492{,}000 parameters). Each is a shared backbone feeding two linear heads, and each ends its backbone with concatenated global average and max pooling, so that the brief contact peak is not washed out by the longer no-contact part of the window.\footnote{The deep models use GroupNorm rather than BatchNorm; this is an implementation-correctness choice on the Apple MPS backend, not a scientific one.} We train both with Adam (learning rate $5\times10^{-4}$, batch size 128, up to 80 epochs on a cosine schedule), minimising the sum of the two cross-entropies, with early stopping on validation combined accuracy.
+
+
+% \subsection{Simultaneous properties recognition}
+% \label{Methodology:Simultaneous_properties_recognition}
+% \textcolor{green!75!black}{ 
+% The goal of this work is to be able to identify two object properties simultaneously (object texture and stiffness), using sensor data gathered during a single grasp of a robotic gripper. Furthermore, only a single sensing modality is utilised in this study, namely the measurement of changes in the magnetic field due to the deformation of the cilia and hollow dome. 
+% %
+% In order to full explore this problem and its limitations, a number of different machine learning models were selected for the classification task. Both traditional methods such as Naive Bayes and SVMs were applied to the problem, as well as more complex approaches such as Convolutional and Recurrent Neural Networks. This broad range of classification architectures allows for a comprehensive understanding of both the nature of the sensor data and the single-grasp, dual classification problem.
+% }
+
+% \textcolor{green!75!black}{ 
+% For the traditional machine learning models, the problem had to be simplified into a single classification task, with a total of 30 classes, each one representing a unique texture-material combination.
+% %
+% For the deep learning models the approach taken was to use the basic backbone of the model with two parallel classification heads, one for the texture and one for the material. 
+% The chosen models were:
+% \begin{itemize}
+%     \item \textbf{InceptionTime/ XceptionTime.} InceptionTime uses parallel convolutions with different kernel sizes, allowing the model to learn multi-scale temporal patterns simultaneously. On the other hand, XceptionTime extends InceptionTime using depthwise–separable convolutions. The model learns per-channel temporal features, as well as cross-channel mixing.
+%     \item \textbf{Convolutional Neural Network (CNN)/ Convolutional Autoencoder (CAE).} These both involved a 1D convolution along the time axis across all 24 channels of the signal data. Both share the same encoder architecture which fed into the parallel classification heads. Additionally the CAE has a corresponding decoder, mirroring the encoder structure.
+%     \item \textbf{Hybrid LSTM-SVM.} This model was explored to jointly leverage sequential representation learning and robust decision boundaries. In this approach, a LSTM network was first trained to encode each multichannel tactile time series into a fixed-length latent representation, summarising the temporal dynamics of the signal. Temporal pooling was applied over the LSTM hidden states to obtain a global sequence embedding. Instead of using the LSTM output layer for direct classification, the learned embeddings were passed to a SVM for final prediction.
+%     \item \textbf{Hybrid CNN-LSTM.} This architecture uses a shared spatial CNN encoder applied to each Taxel array at every timestep, with the per-timestep outputs fed into a temporal CNN which compresses the sequence before passing it to an LSTM. Finally, standard parallel dual-head classifiers were applied to the final output of the LSTM.
+% \end{itemize}
+% }
+
+
+% - Explaining the two heads of model architecture
+% - SVM
+% - CNN
+% - Inceptiontime/ XceptionTime
+
+
+%
+\subsection{Signal Preprocessing}
+\label{Methodology:Signal_Preprocessing}
+%
+Each grasp enters as a $250 \times 96$ tensor. Loading canonicalises the padded and unpadded taxel columns into a single order and drops the ghost taxels present in the fixed files. We then z-score every channel using the mean and standard deviation computed on the training split only, so that the test distribution never informs its own scaling. This matters for the out-of-distribution evaluation: we standardise B using A's statistics.
+%
+
+We evaluate under two splits. The first is the prior work's random stratified split. The second is a group-aware split that keeps all trials of a given (object, position) on one side. The random split can let near-duplicate trials of the same object and position fall on both sides, which inflates accuracy; we quantify that difference later as a memorisation gap.
+%
+
+
+% Data collection could maybe go into Methodology? -Ivo
+\section{Experimental Procedures} % ----------------------------------------------------
+\label{sec:Experiments}
+
+The data were collected as four sub-datasets, each designed to stress a different aspect of grasp position while the 30 objects stay fixed in the holder. Section~\ref{sec:datacollection} defines the four sets and the two-step comparison ladder that runs through them: a first step that raises the grasp height at a fixed lateral pattern, and a second step that then changes the lateral pattern at that raised height.
+
+% \subsection{Sensor Calibration}
+% \label{Experiments:Sensor_calibration}
+% % - calibration 
+% % - data collection (day 1 day 2 day 3...) grasp configs
+% % - at the end of the day we have a dataset composed of xxx objects, for each of them we have 3 dataset (multipoint 1 ,2 3) that consist of 156789 times series 
+% % - data acquisition procedure
+
+
+% \textcolor{orange!75!black} {
+% Two calibration stages are used in the system, both estimating the baseline sensor bias using the sample mean of measurements collected in a no-contact state. Let }
+% \begin{equation}
+% s^{(k)}  \in R^{(12)}
+% \label{eq:baseline_estimation}
+% \end{equation}
+
+% denote the raw cilia sensor vector. The baseline bias is estimated as
+
+% \begin{equation}
+% b =
+% \frac{1}{N}
+% \sum_{k=1}^{N} s^{(k)},
+% \label{eq:baseline_estimation}
+% \end{equation}
+
+% and the calibrated measurement is obtained as
+
+% \begin{equation}
+% \tilde{s}_t = s_t - b,
+% \label{eq:baseline_correction}
+% \end{equation}
+
+% \begin{equation}
+% s_t =
+% [X_1,Y_1,Z_1,X_2,Y_2,Z_2,X_3,Y_3,Z_3,X_4,Y_4,Z_4]^T
+% \end{equation}
+
+% \textcolor{orange!75!black} {During sensor initialization, microcontroller estimates the baseline using $N=60$ samples collected after a transient period of 50 samples. This is designed to compensate for an initial bias caused by external magnetic field. }
+
+
+% \textcolor{orange!75!black} {During experiments, a recorder-side calibration is performed on host computer after each grasp–release motion using $N=100$ samples to compensate for baseline drift caused by external interference and mechanical deformation of the cilia.}
+
+% \textcolor{orange!75!black} {Both calibration procedures are performed with the gripper open and the sensors in free space without object contact. The values N = 60 and N = 100 were empirically selected to provide a stable bias estimation while minimising a calibration time.}
+
+
+
+% \subsection{Grasp Configuration Design}
+% \label{Experiments:Grasps}
+
+
+
+
+
+% \textcolor{orange!75!black} {To introduce contact-location variability, three datasets were obtained based on different grasp configurations: single-position and two multi-position patterns. The grasp locations are illustrated in Fig.~\ref{fig:grasp_configurations_textures}b, where each colored point denotes the center of the $2\times2$ cilia sensor grid during contact.
+% }
+
+% \textcolor{orange!75!black} {The single-position implies that the gripper contacts the object only in a single point. The multi-position configurations have an upturned T-shape pattern composed of five contact positions shifted both horizontally and vertically, with a center point shared with single-position configuration.}
+
+% \textcolor{orange!75!black} {Two multi-position configurations were used to generate different levels of contact variation. The first configuration uses larger horizontal and vertical offsets, whereas the second configuration applies smaller offsets around the same central point (Fig.~\ref{fig:grasp_configurations_textures}b). The offsets were selected such that the entire $2\times2$ taxel grid remains within the object face, ensuring that all taxels maintain contact during grasping.}
+
+% \textcolor{orange!75!black} {In total, three datasets were obtained from 30 objects and three grasp configurations, where each grasp trial constitutes one dataset sample. The joint dataset contains 10,500 samples, distributed across the configurations as summarised in Table~\ref{table:dataset_stats}.}
+
+% % The single-position configuration corresponds to a fixed grasp location located at the center of the textured surface. In contrast, the multi-position configurations follow an upturned T-shaped pattern consisting of five contact locations. The central point coincides with the single-position configuration, while the remaining four positions are shifted horizontally and vertically.
+% % Two multi-position configurations were used to generate different levels of contact variation. The first configuration uses larger horizontal and vertical offsets, whereas the second configuration applies smaller offsets around the same central point (Fig.~\ref{fig:grasp_pattern}).
+% % The offsets were selected such that the entire 2×2 sensor grid remains within the object surface, ensuring that all cilia taxels maintain contact during grasping.
+% % In total, data were collected from 30 objects using the three grasp configurations. Each grasp trial constitutes one dataset sample. The resulting dataset contains 10,500 samples, distributed across the configurations as summarized in Table~\ref{table:dataset_stats}.
+
+
+
+% \begin{table}[h!]
+% \centering
+% \caption{Dataset composition for three grasp configurations.}
+% \label{table:dataset_stats}
+% \begin{tabular}{cccc}
+% \toprule
+% \textbf{} & \textbf{Multi} & \textbf{Multi} & \textbf{Single} \\
+% \textbf{} & \textbf{position 1} & \textbf{position 2} & \textbf{position} \\
+% \midrule
+% Number of Objects, $O$ & 30 & 30 &  30 \\
+% Number of Positions, $P$ & 5 & 5 & 1 \\
+% Trials per Position, $T$ & 20 & 10 & 200 \\
+% \midrule
+% Total Samples in Dataset & 3000 & 1500 & 6000  \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+
+
+% \subsection{Data Acquisition Procedure} 
+
+% \textcolor{orange!75!black} {The gripper motion and data acquisition were coordinated using Robot Operating System 2 (ROS2). For each grasp configuration, the robot moves the gripper to positions described in Section \ref{Experiments:Grasps}. The datasets were collected in the following order: multi-position 1, multi-position 2, single position. }
+
+% \textcolor{orange!75!black} {For each dataset collection, data acquisition is conducted by recording $T$ consecutive grasp–release trials for each of $O$ objects and repeating this process at $P$ positions. Upon completion of $T$ trials, the object is substituted manually. }
+
+% \textcolor{orange!75!black} {Before every grasp-trial recording, sensor calibration occurs (Section \ref{Experiments:Sensor_calibration}).
+% During each trial, the gripper moves to cilia contact position $p_{touch}$ (Section \ref{Methodology:Experimental_Settings}), stops for 0.5 seconds, then continues motion to cilia bend position $p_{bend}$ as described in Algorithm \ref{alg:experiment_procedure}. The recorded trajectory of the gripper per grasp trial can be examined in Fig \ref{fig:data_crop_with_gripper_pos}.}
+
+
+
+% Algorithm of gripper motion
+
+% \begin{algorithm}[t]
+% \caption{Grasping Experiment Procedure}
+% \label{alg:experiment_procedure}
+% \begin{algorithmic}[1]
+
+% \State Set initial position $p_{init}$ 
+% \State Set touch position $p_{touch}$
+% \State Set bend position $p_{bend}$ 
+
+% \For{$i = 1 \dots T$}
+%     \State move\_to($p_{init}$)
+%     \State \textbf{calibration()}
+%     \State wait($2.0$) // seconds
+
+%     \State \textbf{start\_recording()}
+%     \State wait($0.5$) 
+
+%     \State move\_to($p_{touch}$)
+%     \State wait($0.5$)
+
+%     \State move\_to($p_{bend}$)
+%     \State wait($0.5$) 
+
+%     \State move\_to($p_{touch}$)
+%     \State wait($0.5$) 
+
+%     \State move\_to($p_{init}$)
+%     \State wait($0.5$) 
+
+%     \State \textbf{stop\_recording()}
+% \EndFor
+% \end{algorithmic}
+% \end{algorithm}
+
+
+
+
+% To perform the grasps for described settings, and simultaneously record the data from sensors, we integrated the Robot Operating System 2 (ROS2). Once the robot approaches the predefined point of the given grasp setting, the gripper executes \(N\) grasp-release motions, where \(N=20\) trials per object in case of Multi-grasp 2 setting. Each of the \(N\) grasp trials is recorded in separate CSV file. Between each of the \(N\) grasps, the sensor data is recalibrated as described in Section~\ref{sec:Sensor_preproc}. Iteratively, the gripper performs the same procedure for every point in the grip setting.
+
+
+\subsection{Data Collection}
+\label{sec:datacollection}
+
+The data are organised into four sub-datasets, summarised in Table~\ref{tab:datasets}. In every set the same 30 objects sit fixed in the holder and only the grasp changes. The two lateral sampling parameters are the horizontal and vertical contact-grid spacings ($d_h$ and $d_v$), which set how finely the grasp samples a face of an object. Figure~\ref{fig:signal} shows one grasp as the per-taxel XYZ traces over the recording window, with the brief contact peak visible against the longer no-contact part.
+
+\begin{table*}[t]
+\centering
+\caption{The four sub-datasets. Counts are verified by direct file count. $d_h/d_v$ are the lateral contact-grid spacings.}
+\label{tab:datasets}
+\begin{tabular}{lrlll}
+\toprule
+Set & Grasps & Layout & $d_h/d_v$ & Role \\
+\midrule
+fixed     & 600  & $5\times6\times20$        & centred & ID anchor \\
+A         & 3000 & $5\times6\times5\times20$ & 5.0/2.5 mm & train distribution \\
+A\_lifted & 1500 & $5\times6\times5\times10$ & 5.0/2.5 mm, raised & raise-isolation control \\
+B         & 1500 & $5\times6\times5\times10$ & 1.5/1.5 mm, raised, sep.\ session & OOD test \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure}[t]
+\centering
+\subfloat[A single grasp as per-taxel XYZ traces over the 2.5 s window; the brief contact peak stands out against the no-contact part.\label{fig:signal}]{\includegraphics[width=0.82\columnwidth]{signal_example.png}}\\
+\subfloat[The two-step comparison ladder: A to A\_lifted raises the grasp height at a fixed lateral pattern, then A\_lifted to B changes the lateral pattern at the same raised height.\label{fig:ladder}]{\includegraphics[width=0.82\columnwidth]{grasp_ladder.png}}
+\caption{The grasp signal (a) and the grasp-position ladder (b).}
+\label{fig:signal_ladder}
+\end{figure}
+
+The fixed set (600 grasps, $5\times6\times20$) centres the grasp on each object face and serves as an in-distribution anchor. Set A (3000 grasps) samples five grasp positions per object in an inverted-T pattern with wide lateral spacings ($d_h/d_v = 5.0/2.5$ mm) and is the training distribution. A\_lifted (1500 grasps) repeats A's wide lateral pattern but at a raised grasp height, and serves as a raise-isolation control. Set B (1500 grasps) uses a tighter lateral pattern ($d_h/d_v = 1.5/1.5$ mm) at the same raised height, collected in a separate session, and is the out-of-distribution test.
+
+These four sets were collected to support a two-step comparison ladder, which was the documented design intent. The step from A to A\_lifted keeps the lateral pattern fixed (both use $d_h/d_v = 5.0/2.5$ mm) and only raises the grasp height, so it is meant to isolate the vertical raise. The step from A\_lifted to B then changes the lateral pattern (to $d_h/d_v = 1.5/1.5$ mm) at the same raised height. Reading the two steps in order is meant to separate a height effect from a lateral-pattern effect. The ladder is sketched in Figure~\ref{fig:ladder}. Because the Sawyer is the imprecise component of the platform, we checked its inverse-kinematics residuals at the planned grasp centres: they run from 0.19 to 0.80 mm for A and from 0.20 to 0.52 mm for B, which puts the positioning error in the sub-millimetre range we claim for this arm.
+
+
+The dataset specification and the experimenter who collected the data both state that A\_lifted and B sit about 5 mm higher than A. That figure is not recorded in the pose metadata. The only logged end-effector height difference we can recover is between A and B, and it is 1.08 mm; there is no pose file for A\_lifted at all. We therefore claim the \emph{direction} of the raise, which we can measure from the tactile signal and the accuracy, rather than a precise magnitude in millimetres. We cite the 5 mm as design specification plus experimenter testimony, and we acknowledge that the recorded poses do not corroborate it. For the same reason, the A to A\_lifted step is a height isolation in intent only: A\_lifted shares A's lateral pattern but crosses a session boundary and has no logged pose. The A\_lifted to B step then changes both the lateral pattern and the session, so neither step is a perfectly clean single-variable contrast.
+
+%In all configurations, the spatial offsets are strictly bounded to ensure that the entire $2\times2$ ciliary taxel grid of each CMD module remains in full contact with the object's surface during grasping.
+%The overall data acquisition process is fully automated and coordinated via the Robot Operating System 2 (ROS2). For each of the 30 fabricated objects, the robot automatically navigates to the predefined spatial coordinates and executes the position-controlled, single grasp-and-release kinematic trajectory defined in (\S\ref{subsection:Exp setting}). 
+% Section IV-A
+%
+%The datasets were collected sequentially (\textit{Single-position}, \textit{Multi-position A}, \textit{Multi-position B}), with the target object being substituted only upon the completion of all required trials for that specific sample.
+
+
+
+
+% \subsection{Training Procedure}
+
+% \textcolor{green!75!black}{
+% Two different data distribution strategies were used to validate the performance of the models:
+% \begin{itemize}
+%     \item \textbf{In-Distribution (ID).} Data from \textit{Multi-position A}, \text{Multi-position B}, and half of the Single-position dataset were combined and randomly split into non-overlapping training, validation, and test sets using a $50:20:30$ ratio.
+%     \item \textbf{Out-of-Distribution (OOD).} Models were trained exclusively on the \textit{Multi-position A} dataset and evaluated on the \text{Multi-position B} dataset. This setup provides a more rigorous evaluation of generalisation, assessing how well the models and sensor representations transfer to unseen contact conditions and distributions.
+% \end{itemize}
+% All models were trained using identical hyperparameters for 20 epochs, with the best-performing model selected based on validation set performance. This approach was used to mitigate overfitting.
+% }
+
+\subsection{Training and Evaluation Protocols}
+\label{Experiments:Training_Procedure}
+
+We evaluated every model listed in Sec.~\ref{Methodology:Classification_Models} over 5 replicates. Each replicate draws a fresh stratified split of A and a fresh model initialisation, with the split seed and the model seed both set to the replicate index, so the reported spread reflects both data-split and optimisation variance. We report the mean and a 95\% confidence interval computed with the Student-t distribution.
+
+The main experiment trains on A with a 70/10/20 stratified split ($n_\mathrm{train} = 2100$, $n_\mathrm{val} = 300$) and evaluates on three sets: the held-out 20\% of A, which is the in-distribution reference; A\_lifted, the vertical-raise condition; and B, the out-of-distribution condition. We standardised every test set with A's training statistics. We score a grasp as combined-correct only when both heads are correct, so chance combined accuracy is about $1/30$. To compare two models we use a paired test across the shared replicate seeds, taking the per-replicate difference and calling it significant when its 95\% interval excludes zero. We treat the between-model comparisons as exploratory, for reasons we return to in the limitations. Each run also embeds a reproducibility manifest (code commit, library versions, platform, and the invoking arguments) in its results file.
+
+
+% \subsection{Additional Experiments}
+% \label{sec:add_exps}
+% \textcolor{green!75!black}{
+% Alongside the the main experiment, two additional experiments were performed with the collected data, in order to better understand the behaviour of the sensor. Firstly, models were trained using only one of the two sensors to see how using less diverse data affected the classification performance. Secondly, a number of methods were used in order to consolidate the $x, y, z$ readings from each Taxel into one value for each time step. As these values inherently depend on each other, the hypothesis was that combining this data-structure would improve the performance of the models. This reduces the number of channels from 24 to 8, one value for each Taxel at every time step. For this experiment three consolidation methods were employed:
+% \begin{itemize}
+%     \item Euclidean Norm: at each time step, and for each Taxel individually take the norm of the $x, y, z$ values
+%     \item Shared Weight Encoder: at each time step feed the $x, y, z$ values into a small fully connected (FC) network with two layers, before feeding these values into the model as normal. Here, the small FC network shares its weights across all Taxels
+%     \item Unique Weight Encoder: this uses the same structure for the small FC layer, but uses unique weights for each Taxel
+% \end{itemize}
+% }
+% \noindent \textcolor{green!75!black}{
+% The CNN and CAE models were selected for these experiments due to their strong generalization performance and robustness when transitioning from In-Distribution to out-of-distribution evaluation.
+% }
+
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.99\columnwidth]{figures/conf_mats_NEW_IVO/OOD/CNN/OOD_CNN_confusion_matrix_texture_merged.pdf}
+% \caption{Performance of CNN trained in the OOD configuration evaluated on test dataset. (a) Texture and (b) Stiffness confusion matrices. 
+% BL, CI stand for Blackberry and Citrus textures, respectively.}
+% \label{fig:separate_confusion_matrices}
+% \end{figure}
+
+
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.99\columnwidth]{figures/conf_mats_NEW_IVO/ID/CNN/ID_CNN_confusion_matrix_texture_merged.pdf}
+% \caption{Performance of CNN trained in the ID configuration evaluated on test dataset. (a) Texture and (b) Stiffness confusion matrices. 
+% BL, CI stand for Blackberry and Citrus textures, respectively.}
+% \label{fig:separate_confusion_matrices}
+% \end{figure}
+
+
+
+
+\subsection{Ablation Studies}
+\label{Experiments:Ablation_Studies}
+
+We ran two ablations on top of the main protocol.
+
+\textbf{1) Density ablation.} We reduce the 32-taxel, 96-channel array to a paper-equivalent 8 taxels and 24 channels, keeping 4 taxels per finger (taxels 1, 5, 9, 13 on finger~1 and taxels 17, 21, 25, 29 on finger~2, evenly spaced, as marked in Fig.~\ref{fig:taxels}), and ask whether the extra density helps in or out of distribution.
+
+\textbf{2) Axis-aggregation ablation.} Following the prior work~\cite{cmd_source}, we collapse each taxel's three axes $(X, Y, Z)$ to a single $L_2$ magnitude and ask where the texture and stiffness signals live.
+
+We report the results of both ablations in the Results section.
+%
+
+% \section{Experimental Results and Discussion}
+% \label{Results_Discussion}
+
+% \subsection{Simultaneous Dual-Property Recognition}
+% % \textcolor{orange!75!black} {
+% % The performance of the evaluated machine learning models is measured in accuracy (Acc \%) defined as the proportion of correctly predicted labels over the total number of test samples:}
+
+% % \[
+% % \mathrm{Acc}=\frac{1}{N}\sum_{i=1}^{N}\mathbf{1}(\hat{y}^{(i)}=y^{(i)}),
+% % \]
+
+% % \textcolor{orange!75!black} {
+% % where \(N\) is the number of evaluated samples, \(\hat{y}^{(i)}\) is the predicted label, \(y^{(i)}\) is the ground-truth label, and \(\mathbf{1}(\cdot)\) is the indicator function.
+% % In the performance evaluation presented in Table \ref{tab:main_results}, we report texture accuracy and stiffness accuracy independently, and additionally report combined accuracy, where a sample is considered correct only if both texture and stiffness are classified correctly.}
+
+% The primary objective of the CMD sensor is the simultaneous classification of texture and bulk stiffness from a single grasp. Table II details the performance of the evaluated models. Under In-Distribution (ID) evaluation, both the InceptionTime and the hybrid LSTM-SVM architectures achieved the highest overall accuracy (94.6\% and 94.0\%, respectively). Deep learning models processing the raw spatio-temporal data significantly outperformed classical baseline methods (Naive Bayes at 59.0\% and flattened SVM at 84.0\%). These ID results successfully validate our core hypothesis: the rich, 24-channel magnetic time-series generated by the dual CMD configuration provides sufficient information to accurately decouple micro-scale texture features from macro-scale stiffness responses in a single dynamic motion.
+
+% A consistent trend across all models is that texture classification accuracy systematically exceeds stiffness accuracy. This discrepancy highlights the mechanical behavior of the CMD design: the soft ciliary array interacts intimately with surface topologies, generating robust, high-frequency magnetic variations. Conversely, stiffness estimation relies on the macroscopic compression of the hollow dome, which is inherently more sensitive to subtle variations in grasp positioning and contact angle.
+
+% This sensitivity to contact geometry is further evidenced by the Out-of-Distribution (OOD) evaluation, where models were tested on spatial offsets unseen during training. While overall accuracy drops to approximately 57\%--59\% for the best performing models (CNN, CAE, and LSTM-SVM), this reflects the well-known challenge of spatial generalization in tactile sensing. Small translational shifts on a low-resolution $2\times 2$ taxel array significantly alter the local stress distribution. Notably, the hybrid CNN-LSTM architecture underperformed compared to purely temporal models (e.g., InceptionTime). We attribute this to the low spatial density of the sensor ($2\times 2$ grid per finger), which does not provide sufficient spatial gradients for the CNN encoder to extract meaningful spatial patterns prior to temporal processing.
+
+
+% % \begin{figure}[t]
+% % \centering
+% % \includegraphics[width=0.99\columnwidth]{figures/conf_mats_NEW_IVO/OOD/CAE/OOD_CAE_confusion_matrix_texture_merged.pdf}
+% % \caption{Performance of CAE trained in the OOD configuration evaluated on test dataset. (a) Texture and (b) Stiffness confusion matrices. 
+% % BL, CI stand for Blackberry and Citrus textures, respectively.}
+% % \label{fig:separate_confusion_matrices}
+% % \end{figure}
+
+% % \begin{figure}[t]
+% % \centering
+% % \includegraphics[width=0.99\columnwidth]{figures/conf_mats_NEW_IVO/ID/CAE/ID_CAE_confusion_matrix_texture_merged.pdf}
+% % \caption{Performance of CAE trained in the ID configuration evaluated on test dataset. (a) Texture and (b) Stiffness confusion matrices. 
+% % BL, CI stand for Blackberry and Citrus textures, respectively.}
+% % \label{fig:separate_confusion_matrices}
+% % \end{figure}
+
+% \subsection{Single-Sensor vs. Dual-Sensor Configuration}
+% % To justify the dual-sensor gripper configuration, we evaluated the classification performance using data from only a single CMD module (Table IV). The results indicate a noticeable performance gap between the two modules; for example, under OOD conditions, the CAE model achieved 53.1\% total accuracy using Sensor 1, compared to 50.2\% using Sensor 2. 
+
+% % This variance is primarily due to slight mechanical asymmetries introduced during the manual casting and assembly of the soft silicone structures. However, this discrepancy effectively demonstrates the critical advantage of the dual-sensor setup. By simultaneously capturing tactile interactions from opposing sides of the grasped object, the combined 24-channel system leverages complementary data, successfully compensating for individual hardware biases and yielding a significantly higher overall accuracy (as seen in the baseline dual-sensor results in Table II).
+
+% The Single-Sensor ablation study results (Table \ref{tab:single_sensor_results}) confirm that single-CMD-module performance was consistently lower than the dual-sensor baseline (Table \ref{tab:main_results}) across the tested models. This degradation highlights the value of capturing contact information from both gripper fingers.
+% Under OOD conditions, for example, the CAE model achieved 53.1\% total accuracy using Sensor 1 vs. 50.2\% using Sensor 2. A modest but systematic gap also seen in the CNN (53.2\% vs. 47.9\%).
+% We attribute these differences primarily to minor mechanical asymmetries from manual silicone casting and assembly, which affect local compliance. The dual-sensor setup compensates effectively: the 24 joint channels provide complementary interaction views from opposing sides, yielding substantially higher accuracies than either sensor alone.
+
+
+% \subsection{Tri-Axis Signal Consolidation and Inter-dependency}
+% Finally, we investigated whether the three-axis $(X, Y, Z)$ magnetic readings could be compressed into a single scalar value per taxel without losing critical contact information (Table \ref{tab:tri_axis_fusion_results}). The deterministic geometric approach (Euclidean Norm) resulted in the most severe performance degradation (e.g., 78.1\% for the 1D CNN), approximately 13\% lower than the raw 24-channel baseline. This confirms that the sheer magnitude of the magnetic vector is insufficient; the directional components of the field are essential for decoupling shear-induced texture from normal-force-induced stiffness.
+
+% When applying trainable MLP encoders, the \textit{Unique-Weights} approach (which learns independent parameters for each taxel) outperformed the \textit{Shared-Weights} approach (which enforces spatial invariance). The \textit{Unique-Weights} models achieved over 90\% accuracy, nearly matching the baseline performance. This finding provides an important insight into the CMD mechanics: due to the continuous elastomeric base connecting the cilia and the non-linear deformation of the dome, each taxel exhibits unique mechanical coupling and cross-talk characteristics. Consequently, localized, taxel-specific processing is required to optimally decode the tactile signals.
+
+
+% % \section{Results}
+% % \label{sec:Results}
+
+% % \subsection{Classification Performance}
+% % \label{sec:main_results_subsec}
+
+% % The performance of the evaluated machine learning models is measured in accuracy (\%) across the individual and combined classification tasks and is presented in Table \ref{tab:main_results}. The results show a trend in the different classification tasks with the material accuracy being consistently lower than the texture accuracy, a pattern which remains constant across all models. Furthermore, there is substantial variation in performance depending on whether the models are trained using In-Distribution (ID) or Out-of-Distribution (OOD) data.
+% % %
+% % The InceptionTime and hybrid LSTM-SVM models achieved the highest total performance in the ID evaluation, with both reaching 94\% accuracy. The remaining deep learning models also performed well, with the CNN and CAE models achieving accuracies slightly above 91\%, while the XceptionTime model obtained a lower accuracy of 86\%. The classical machine learning approaches produced the lowest overall results, with the Naive Bayes classifier achieving 59\% and the flattened signal SVM reaching 84\% accuracy.
+
+
+% % For the OOD evaluation, the CNN, LSTM-SVM and CAE models achieved the highest performance, with accuracies ranging from $57\% - 59\%$, while the InceptionTime and XceptionTime models both obtained accuracies of $53\%$. Similarly to the ID evaluation, the classical machine learning approaches produced the lowest results, with the Naive Bayes classifier achieving $43\%$ accuracy and the SVM reaching $51\%$.
+
+% NOTE: the prior work's 8-model CMD results table (\label{tab:main_results})
+% was removed here. It reported the prior work's own numbers and is replaced by
+% our own per-set results table (tab:ood) presented in the Results section below.
+
+% \subsection{Single Sensor Performance}
+% \textcolor{red!75!black}{
+% Table \ref{tab:single_sensor_results} shows the classification performance of selected models when trained and tested using signal data from only one of the two sensors. Overall, the results for Sensor 1 were consistently higher than for Sensor 2 across all evaluated models and data distributions.
+% For sensor 1, under OOD evaluation both the CNN and CAE produced similar results at just over 53\%. For sensor 2, the CAE performed marginally better at 50.2\% compared to the CNN at 47.9\% accuracy. 
+% }
+
+% % Under ID evaluation, the CAE model achieved the highest total classification accuracy at 90.9\%, followed by the CNN with 87.7\%.
+% As with section \ref{sec:main_results_subsec}, performance decreased notably under OOD testing for both sensors. For Sensor 1, the CAE and CNN achieved total accuracies of 53.1\% and 53.8\%, respectively, indicating a significant reduction in generalisation performance. A similar trend was observed for Sensor 2, where total accuracies decreased further to 50.2\% for the CAE and 47.9\% for the CNN.
+
+
+% % We do also have the OOD results for this, but they show the same trend
+% \begin{table}[t]
+% \centering
+% \scriptsize
+% \caption{In-Distribution model performance (\% Accuracy) for $x, y, z$ consolidation strategies.}
+% \label{tab:tri_axis_fusion_results}
+% \begin{tabular}{lc|ccc}
+% % \toprule
+% Consolidation &  & Stiffness & Texture & Total \\
+% Method & Model & Acc. & Acc. & Acc. \\
+% \midrule
+
+% Euclidian & CNN & 84.9 & 91.6 & 78.1 \\
+% Norm & CAE & 88.1 & 93.1 & 82.5 \\
+
+% \midrule
+
+% Shared & CNN & 84.9 & 95.0 & 80.7 \\
+% Weights & CAE & 88.1 & 96.1 & 85.3 \\
+
+% \midrule
+
+% Unique & CNN & 93.2 & 95.4 & 89.5 \\ 
+% Weights & CAE & 93.4 & 96.6 & 90.4 \\
+
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+% NOTE: If looking for a reason why the CNN/ CAE models were selected for this we can say that they showed the most consistent results across both data distribution methods. -Ivo
+% We do also have the OOD results for this, but they show the same trend
+% \subsection{Tri-axis Signal Consolidation}
+
+% As described in Section \ref{Experiments:Ablation_Studies}, three different signal consolidation methods were chosen to explore the relationship between the $x, y, z$ values produced by the tri-axis hall effect sensors across the different taxels. Table \ref{tab:tri_axis_fusion_results} shows the evaluated ID accuracy across these different consolidation methods. 
+% % The simple approach of applying a euclidean norm across the $x, y, z$ values at each time step and for each Taxel individually, produced the lowest results with 78\% for the CNN and 82\% for the CAE, approximately 10\% lower than without using any consolidation method at all (Table \ref{tab:main_results}). 
+% \textcolor{red!75!black}{
+% The $L_2$ Norm approach produced the lowest results with 78\% for the CNN and 82\% for the CAE, approximately 10\% lower than the baseline results presented in Table \ref{tab:main_results}. 
+% }
+% The performance of the shared $x, y, z$ weights produced slightly better results than that of the euclidean norm, though once again still significantly lower than the baseline results. 
+% Using unique $x, y, z$ weights for each taxel produced accuracies, comparable to the baseline results, however they are still slightly lower with both at approximately 90\% total accuracy (\(\approx 1\%\) lower).
+
+
+% NOTE: I have remapped sensor 0 -> Sensor 1 and Sensor 1 -> Sensor 2
+% ALSO, we do have the LSTM+SVM results for this, but not sure if we should include them here as we've only got the CNN/ CAE results for the XYZ concat. Might be better to keep this consistent -Ivo
+
+% \begin{table*}[!ht]
+% \centering
+% \scriptsize
+% % \renewcommand{\arraystretch}{1.2}
+% \caption{Single sensor classification performance (\% Accuracy).}
+% \label{tab:single_sensor_results}
+% {\normalsize
+% \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lc|ccc|ccc}
+% \toprule
+%  &  & \multicolumn{3}{c|}{In-Distribution} & \multicolumn{3}{c}{Out-of-Distribution} \\
+% % \midrule
+% & Model & Material Acc. & Texture Acc. & Total Acc. 
+% & Material Acc. & Texture Acc. & Total Acc. \\
+% \midrule
+
+% \multirow{2}{*}{Sensor 1} & CNN & 91.6 & 95.5 & 87.7 & 69.3 & 80.3 & 53.8 \\
+%  & CAE & 94.2 & 96.1 & 90.9 & 68.5 & 78.3 & 53.1 \\
+%  % & LSTM + SVM & 86.0 & 90.0 & 79.0 & 65.0 & 75.0 & 50.0 \\
+
+% \midrule
+
+% \multirow{2}{*}{Sensor 2} & CNN & 81.7 & 91.6 & 75.4 & 60.5 & 78.7 & 47.9 \\
+%  & CAE & 84.8 & 94.0 & 80.2 & 61.9 & 82.1 & 50.2 \\
+%  % & LSTM + SVM & 82.0 & 88.0 & 75.0 & 57.0 & 74.0 & 43.0 \\
+
+% \bottomrule
+% \end{tabular*}
+% }
+% \end{table*}
+
+% \begin{table*}[!ht]
+% \centering
+% \scriptsize % keeps everything small
+% \setlength{\tabcolsep}{3.5pt} % reduce horizontal padding
+% \renewcommand{\arraystretch}{0.9} % reduce vertical padding
+% \caption{Single sensor classification performance (\% Accuracy).}
+% \label{tab:single_sensor_results}
+% \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lc|ccc|ccc}
+% \toprule
+%  &  & \multicolumn{3}{c|}{In-Distribution} & \multicolumn{3}{c}{Out-of-Distribution} \\
+%  & Model & Stiffness Acc. & Texture Acc. & Total Acc. 
+%  & Stiffness Acc. & Texture Acc. & Total Acc. \\
+% \midrule
+% \multirow{2}{*}{Sensor 1} & CNN & 91.6 & 95.5 & 87.7 & 69.3 & 80.3 & 53.8 \\
+%  & CAE & 94.2 & 96.1 & 90.9 & 68.5 & 78.3 & 53.1 \\
+% \midrule
+% \multirow{2}{*}{Sensor 2} & CNN & 81.7 & 91.6 & 75.4 & 60.5 & 78.7 & 47.9 \\
+%  & CAE & 84.8 & 94.0 & 80.2 & 61.9 & 82.1 & 50.2 \\
+% \bottomrule
+% \end{tabular*}
+% \end{table*}
+
+% \begin{table}[!ht]
+% \centering
+% \scriptsize
+% \setlength{\tabcolsep}{2.5pt}
+% \renewcommand{\arraystretch}{0.9}
+% \caption{Single sensor classification performance (\% Accuracy).}
+% \label{tab:single_sensor_results}
+% \begin{tabular}{lc|ccc|ccc}
+% \toprule
+%  &  & \multicolumn{3}{c|}{In-Distribution} & \multicolumn{3}{c}{Out-of-Distribution} \\
+%  & Model & \multicolumn{3}{c|}{Accuracy} & \multicolumn{3}{c}{Accuracy} \\
+%  &  & Stiffness & Texture & Total & Stiffness & Texture & Total \\
+% \midrule
+% \multirow{2}{*}{Sensor 1} & CNN & 91.6 & 95.5 & 87.7 & 69.3 & 80.3 & 53.8 \\
+%  & CAE & 94.2 & 96.1 & 90.9 & 68.5 & 78.3 & 53.1 \\
+% \midrule
+% \multirow{2}{*}{Sensor 2} & CNN & 81.7 & 91.6 & 75.4 & 60.5 & 78.7 & 47.9 \\
+%  & CAE & 84.8 & 94.0 & 80.2 & 61.9 & 82.1 & 50.2 \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+% \section{Discussion} % --------------------------------------------------
+% \label{sec:Discussion}
+% The most consistent trend across all results is the aforementioned difference between Texture and Material performance, with all models producing significantly higher texture accuracy. This discrepancy likely arises from a combination of factors, including the class structure of the dataset, as well as the characteristics of the tactile signals generated during interaction. This indicates that the current sensor structure is more sensitive to features associated with surface texture than to those associated with material. 
+% \textcolor{red!75!black}{
+% The design of the CMD sensor emphasises the cilia array, more than the hollow dome structure, which may explain this discrepancy in the results.
+% }
+% % This is consistent with the hypothesis that the artificial cilia are more sensitive to higher frequency signals, typically associated with texture. The design of this sensor emphasises the cilia array, rather than the hollow dome structure, which is likely more sensitive to the lower frequency deformations associated with object stiffness and which doesn't inherently have any direct sensing capabilities.
+
+% Another point of note is the difference in performance from the individual sensor results (Table \ref{tab:single_sensor_results}), showing much higher accuracies from sensor 1. This is most likely due to slight differences in each sensor module caused by the manual fabrication process, giving each one slightly different properties. This is supported by the results from the $x, y, z$ signal consolidation (Table \ref{tab:tri_axis_fusion_results}) as there is a significant increase in accuracy from the shared to the unique weight encoder, suggesting that each taxel produces a different signal quality. 
+% Despite these inconsistencies there is a clear advantage to using data from both sensors simultaneously, seen by the increase in accuracy between using one (Table \ref{tab:single_sensor_results}) and using both sensors (Table \ref{tab:main_results}). Even though the objects are symmetrical from the perspective of the sensors, using data from both provides a clear advantage as it leverages more diverse data.
+
+% In terms of the the models themselves a notable point is the underperformance of the hybrid CNN-LSTM approach, which produced significantly weaker accuracies than the other deep-learning models. \textcolor{red!75!black}{This is likely due to the low density $2\times2$ taxel arrays, in combination with the flat repeating textures of the soft objects, meaning that the CNN was not able to learn any meaningful spatial patterns from the sensor data.}
+
+
+
+
+
+% \section{TEST Experimental Results and Discussion}
+% \label{Results_Discussion}
+
+% \subsection{Benchmarking Dual-Property Recognition Models}
+% \textcolor{red}{
+% The performance of the evaluated machine learning models is measured in accuracy (Acc \%), defined as the proportion of correctly predicted labels over the total number of test samples:
+% \begin{equation}
+% \mathrm{Acc}=\frac{1}{N}\sum_{i=1}^{N}\mathbf{1}(\hat{y}^{(i)}=y^{(i)}),
+% \end{equation}
+% where \(N\) is the number of evaluated samples, \(\hat{y}^{(i)}\) is the predicted label, \(y^{(i)}\) is the ground-truth label, and \(\mathbf{1}(\cdot)\) is the indicator function. In the performance evaluation presented in Table II, we report texture accuracy and stiffness accuracy independently, and additionally report combined accuracy, where a sample is considered correct only if both texture and stiffness are classified correctly.
+% }
+
+% Under In-Distribution (ID) evaluation, both the InceptionTime and the hybrid LSTM-SVM architectures achieved the highest combined accuracy (94.6\% and 94.0\%, respectively). Deep learning models processing the raw spatio-temporal data significantly outperformed classical baseline methods (Naive Bayes at 59.0\% and flattened SVM at 84.0\%). These ID results successfully validate our core hypothesis: the rich, 24-channel magnetic time-series generated by the dual CMD configuration provides sufficient information to accurately decouple micro-scale texture features from macro-scale stiffness responses in a single dynamic motion.
+
+% A consistent trend across all models, under both ID and Out-of-Distribution (OOD) evaluations, is that texture classification accuracy systematically exceeds stiffness accuracy. This discrepancy highlights the mechanical behavior of the CMD design: the soft ciliary array interacts intimately with surface topologies, generating robust, high-frequency magnetic variations regardless of minor grasp variations. Conversely, stiffness estimation relies on the macroscopic compression of the hollow dome, which is inherently more sensitive to subtle variations in grasp positioning and contact angle.
+
+% \subsection{Classification Dynamics and Sensor Mechanics}
+% To gain deeper insights into the physical interactions captured by the CMD sensor, we analysed the confusion matrices of the 1D CNN model. While InceptionTime peaked in ID evaluation, the 1D CNN exhibited strong, balanced generalization in OOD scenarios (59.5\% total accuracy), making it an ideal candidate to investigate the underlying error dynamics.
+
+% \textcolor{red}{
+% In the ID evaluation, the combined 30-class confusion matrix (Fig. 6, top) demonstrates exceptional overall precision. Given the 30-class complexity (with a random chance level of $\approx 3.3\%$), the vast majority of predictions fall perfectly on the diagonal. Crucially, when misclassifications occur, they are overwhelmingly confined to adjacent stiffness levels or highly compliant topologies. For example, 41\% of \textit{CI-5} samples are misclassified as \textit{CI-4}, reflecting the continuous physical deformation of the silicone dome. Similarly, \textit{Ultra-Soft} and \textit{Soft Strawberries} (\textit{ST-1} and \textit{ST-2}) are confused with \textit{Rough} surfaces (\textit{RO-1} and \textit{RO-2}) in 20\% of cases. This suggests that extreme material softness dampens the contact pressure on the ciliary array, making it slightly harder for the sensor to distinguish between topologically similar high-frequency patterns.
+% }
+
+% \textcolor{red}{
+% This structured, physically meaningful behavior is even more evident in the OOD confusion matrices, where spatial grasp offsets were introduced. While the overall 30-class combined accuracy naturally drops when facing unseen spatial shifts, the model exhibits a graceful degradation rather than random failure. For instance, \textit{BL-1} (Blackberry-Ultra-Soft) is classified correctly 46\% of the time and predicted as \textit{BL-2} (Blackberry-Soft) 50\% of the time. In a 30-class problem, converging 96\% of predictions into the exact correct texture and within one adjacent stiffness level represents a remarkable generalization, far exceeding the 3.3\% chance level.
+% }
+
+% \textcolor{red}{
+% Looking at the separate OOD matrices, the mechanical cause of this robust generalization becomes clear. When a highly rigid object is grasped off-center, the asymmetric forces alter the dome's macroscopic compression profile, leading the model to systematically underestimate the bulk stiffness (e.g., \textit{Hard} samples are frequently misclassified as \textit{Light-Hard}). This is well represented by the \textit{Citrus-Hard} class (\textit{CI-5}), which is predicted as \textit{Citrus-Light-Hard} (\textit{CI-4}) 80\% of the time. However, despite the offset in stiffness estimation, the texture is still perfectly recognized as \textit{Citrus}. This proves a fundamental advantage of the CMD design: while spatial translational shifts can induce a softer macroscopic dome reading, the local ciliary bending—responsible for texture extraction—remains highly robust and accurate across the object's surface.
+% }
+
+% \subsection{Tri-Axis Signal Consolidation and Inter-dependency}
+% Finally, we investigated whether the three-axis $(X, Y, Z)$ magnetic readings could be compressed into a single scalar value per taxel without losing critical contact information (Table \ref{tab:tri_axis_fusion_results}). The deterministic geometric approach (Euclidean Norm) resulted in the most severe performance degradation (e.g., 78.1\% for the 1D CNN), approximately 13\% lower than the raw 24-channel baseline. This confirms that the sheer magnitude of the magnetic vector is insufficient; the directional components of the field are essential for decoupling shear-induced texture from normal-force-induced stiffness.
+
+% When applying trainable MLP encoders, the \textit{Unique-Weights} approach (which learns independent parameters for each taxel) outperformed the \textit{Shared-Weights} approach (which enforces spatial invariance). The \textit{Unique-Weights} models achieved over 90\% accuracy, nearly matching the baseline performance. This finding provides an important insight into the CMD mechanics: due to the continuous elastomeric base connecting the cilia and the non-linear deformation of the dome, each taxel exhibits unique mechanical coupling and cross-talk characteristics. Consequently, localized, taxel-specific processing is required to optimally decode the tactile signals.
+%
+
+
+%
+\section{Experimental Results and Discussion}
+\label{Results_Discussion}
+
+\subsection{Accuracy of Dual-Property Recognition}
+
+Table~\ref{tab:ood} reports every model on the three test sets. In distribution,
+on the held-out 20\% of A, the three strong models reach the ceiling: combined
+accuracy is $0.980 \pm 0.011$ for the SVM, $0.993 \pm 0.004$ for the CNN, and
+$0.993 \pm 0.005$ for InceptionTime, with Naive Bayes the weakest at
+$0.479 \pm 0.026$. This ceiling is inflated by leakage in the random split, and we
+revisit it as a memorisation gap later in this section.
+
+\begin{table}[t]
+\centering
+\setlength{\tabcolsep}{4pt}
+\caption{Per-set accuracy (mean $\pm$ 95\% CI over 5 replicates). A\_test is the
+held-out in-distribution slice of A, A\_lifted the vertical-raise condition, and B
+the out-of-distribution set. Chance is 0.200 for stiffness, 0.167 for texture, and
+0.033 for combined.}
+\label{tab:ood}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{llccc}
+\toprule
+Model & Set & Stiffness & Texture & Combined \\
+\midrule
+NB & A\_test   & $0.739 \pm 0.014$ & $0.691 \pm 0.026$ & $0.479 \pm 0.026$ \\
+   & A\_lifted & $0.662 \pm 0.023$ & $0.354 \pm 0.007$ & $0.212 \pm 0.004$ \\
+   & B         & $0.651 \pm 0.016$ & $0.357 \pm 0.013$ & $0.243 \pm 0.006$ \\
+\midrule
+SVM & A\_test   & $0.990 \pm 0.009$ & $0.989 \pm 0.006$ & $0.980 \pm 0.011$ \\
+    & A\_lifted & $0.674 \pm 0.027$ & $0.357 \pm 0.009$ & $0.242 \pm 0.008$ \\
+    & B         & $0.738 \pm 0.015$ & $0.335 \pm 0.005$ & $0.242 \pm 0.004$ \\
+\midrule
+CNN & A\_test   & $0.997 \pm 0.002$ & $0.995 \pm 0.004$ & $0.993 \pm 0.004$ \\
+    & A\_lifted & $0.519 \pm 0.028$ & $0.310 \pm 0.052$ & $0.184 \pm 0.024$ \\
+    & B         & $0.560 \pm 0.021$ & $0.233 \pm 0.041$ & $0.148 \pm 0.028$ \\
+\midrule
+InceptionTime & A\_test   & $0.996 \pm 0.002$ & $0.997 \pm 0.004$ & $0.993 \pm 0.005$ \\
+              & A\_lifted & $0.525 \pm 0.039$ & $0.339 \pm 0.029$ & $0.186 \pm 0.029$ \\
+              & B         & $0.499 \pm 0.070$ & $0.255 \pm 0.037$ & $0.140 \pm 0.022$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+The decomposition is the main result. Splitting the A to B drop into a raise step
+(A to A\_lifted) and a lateral-pattern step (A\_lifted to B) shows that almost all
+of the collapse happens at the raise. For the three strong models combined accuracy
+falls by 0.74 to 0.81 from A\_test to A\_lifted ($-0.738$ for the SVM, $-0.809$ for
+the CNN, $-0.807$ for InceptionTime; $-0.267$ for Naive Bayes), whereas the further
+step to B moves combined by only about $\pm 0.05$ ($+0.031$ for NB, $-0.000$ for
+the SVM, $-0.036$ for the CNN, $-0.046$ for InceptionTime). The vertical raise
+therefore accounts for essentially the entire A to B collapse.
+Figure~\ref{fig:decomposition} shows the two steps side by side. We claim the
+direction of this effect rather than a magnitude in millimetres: the A\_lifted to B
+step also changes the lateral pattern and the collection session, so it is not a
+clean single-variable contrast, and we treat it conservatively.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.82\columnwidth]{decomposition.png}
+\caption{Combined accuracy across the two-step ladder. The vertical raise
+(A\_test to A\_lifted) removes most of the in-distribution accuracy; the further
+lateral-pattern step (A\_lifted to B) barely moves it.}
+\label{fig:decomposition}
+\end{figure}
+
+The two heads behave very differently under the raise. Texture collapses: the
+CNN's texture accuracy falls from $0.995$ on A\_test to $0.233$ on B, drifting
+toward but not reaching its $0.167$ chance level. Stiffness survives: it stays
+around $0.50$ to $0.74$ on B for the strong models, well above its $0.200$ chance.
+Texture is a fine spatial pattern in the relative response across taxels, and
+stiffness is a bulk deformation magnitude, so it is the fine pattern that the raise
+disrupts.
+
+A like-for-like comparison to the prior work~\cite{cmd_source} puts these numbers
+in context. Our best OOD combined accuracy (about $0.24$) is below the prior work's
+(about $0.595$), but our in-distribution accuracy is higher ($0.993$ vs $0.946$) and
+our OOD stiffness is comparable ($0.738$ vs $0.70$). The whole deficit sits in OOD
+texture (about $0.34$ vs $0.81$), which drags combined accuracy down because
+combined needs both heads. The reason is that our B set was physically raised, while
+the prior work's out-of-distribution test was a lateral shift at the same grasp
+height. This is a harder, raised-grasp condition the prior work did not test, not
+underperformance against a matched setting. Because no head-to-head under a matched
+raise exists, we read the OOD texture gap as driven by the raised-grasp condition
+rather than by the sensor: not that the flat array is generally worse at texture,
+only worse under this harder condition. Stiffness, by contrast, is comparable to the
+ciliated sensor throughout, near-ceiling in distribution and $0.738$ against $0.70$
+out of distribution.
+
+Out of distribution the SVM beat the deep models on B combined accuracy
+(SVM $-$ CNN $= +0.094 \pm 0.031$, SVM $-$ InceptionTime $= +0.102 \pm 0.024$, both
+significant and surviving a Bonferroni correction across three comparisons), which
+we report as exploratory given a fixed test set and a model-family confound, and
+whose details we defer to the limitations. We do not read this as a general claim
+that classical models beat deep models.
+
+\subsection{Classification errors}
+\label{sec:confusion}
+
+The confusion matrices show where the errors fall and confirm the two-head split.
+Figure~\ref{fig:cm_inception} gives the InceptionTime stiffness and texture
+confusions in distribution and on B. In distribution both heads have a near-perfect
+diagonal, matching the ceiling accuracy in Table~\ref{tab:ood}. Out of distribution
+the two heads fail in different ways: stiffness errors fall between adjacent hardness
+levels, so the degradation is graceful, consistent with the observation that objects
+harder than the sensor are the most difficult to estimate~\cite{li25tacCompDet},
+whereas texture predictions collapse onto a few classes rather than spreading evenly,
+which is the fine-pattern failure we trace to the registration shift below. The SVM behaves the same way. This mirrors the
+confusion-matrix analysis in the prior work~\cite{cmd_source}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\columnwidth]{confusion_inception.png}
+\caption{InceptionTime confusion matrices for stiffness and texture, in distribution
+and on B. The diagonal is near-perfect in distribution; out of distribution
+stiffness errors stay between adjacent hardness levels while texture collapses onto
+a few classes.}
+\label{fig:cm_inception}
+\end{figure}
+
+
+\subsection{Mechanism: a registration shift}
+
+The texture information is not lost. Training and testing within the raised set
+recovers texture well above chance under the group-aware split (SVM
+$0.700 \pm 0.030$, CNN $0.686 \pm 0.071$, InceptionTime $0.653 \pm 0.051$ on
+A\_lifted, against $0.167$ chance), so the failure is a transfer problem, not lost
+signal. The same texture imprints differently on the array at the two heights, and
+the difference is spatial: the per-taxel correlation of the response between A and
+A\_lifted, across the 150 object-position conditions, is patchy
+(Figure~\ref{fig:mechanism}b), from $0.09$ to $0.84$ (mean $0.40$, matching the
+$0.391$ global energy-profile correlation). The raised grasp also makes fuller
+contact (mean signal $0.42$ vs $0.35$, peak $6.1$ vs $4.1$), consistent with the low
+grasp being mechanically compromised by the holder and the clamped texture-less
+base. We call this a contact-condition and sensor-registration covariate shift:
+texture, a fine pattern across taxels, is sensitive to it; stiffness, a bulk
+magnitude, is not.
+
+Because A and A\_lifted come from separate sessions, we checked that this is not
+sensor drift. In the post-release no-contact segment, which is not used for the
+per-grasp baseline calibration, the per-channel baseline barely differs between
+sessions: a mean shift of $0.0049$, only $0.33\%$ of the contact-window signal
+(Figure~\ref{fig:mechanism}a), two orders of magnitude below the contact change the
+raise produces. We do not disentangle the sub-mechanism (contact depth, pressure
+redistribution, and alignment are confounded), so the precise cause remains a
+hypothesis.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\columnwidth]{mechanism_session_registration.png}
+\caption{(a) Session-drift control: the post-release no-contact baseline is nearly
+identical for A and A\_lifted (on the diagonal), a mean shift of $0.33\%$ of the
+contact signal. (b) Per-taxel registration: correlation of each taxel's response
+between A and A\_lifted across the 150 object-position conditions (green preserved,
+red lost; mean $0.40$), showing the shift is spatially patchy.}
+\label{fig:mechanism}
+\end{figure}
+
+\subsection{Ablations: density and aggregation}
+
+We ran two ablations to ask whether the hardware difference, the denser
+array, helps and where the texture and stiffness signals live. The first reduces
+the 32-taxel, 96-channel array to a reduced 8 taxels and 24 channels (matching the
+prior work's sensor density; the 4-per-finger subsample of Figure~\ref{fig:taxels}:
+taxels 1, 5, 9, 13 and 17, 21, 25, 29, evenly spaced). In
+distribution the strong models barely move: the CNN and InceptionTime lose only
+about $0.011$ to $0.012$ combined, and the one large gain, $+0.118$, is confined to
+Naive Bayes, so 8 taxels already nearly saturate the in-distribution task. Out of
+distribution the extra density buys no robustness. The combined deltas on B are at
+most about $0.05$ and mixed in sign; for the SVM the 24-channel version is even
+slightly better on B, a difference we do not lean on because it does not survive a
+Bonferroni correction. The denser array buys resolution, not invariance: the
+out-of-distribution problem is set by grasp pose, not sensor resolution
+(Figure~\ref{fig:density}).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.82\columnwidth]{density_ablation.png}
+\caption{Channel-density ablation: full 96-channel array versus a reduced 24-channel
+(8-taxel) version. The denser array adds resolution in distribution but no
+out-of-distribution robustness on B.}
+\label{fig:density}
+\end{figure}
+
+The second ablation is the prior work's own: we collapse each taxel's three axes
+(XYZ) to a single L2 magnitude. For the classical models this cripples texture but
+spares stiffness (Naive Bayes texture $0.691 \to 0.404$, SVM $0.989 \to 0.866$;
+stiffness within $0.013$), replicating the prior work's finding that texture lives in
+the directional components and stiffness in the magnitude~\cite{cmd_source}, now on a
+different sensor. Our deep models barely change (texture delta $0.003$ to $0.005$),
+recovering texture from magnitude alone. This is not mere ceiling saturation: the
+prior work's deep model dropped about 13 points combined under the same
+collapse~\cite{cmd_source} despite a comparable near-ceiling, leaky protocol. The
+likelier reading is a sensor-encoding difference. On the ciliated dome texture is
+directional, so collapsing the axes discards it; on the flat array texture also lives
+in the pressure pattern across taxels, which survives the collapse and which a deep
+model can read. We treat this as a hypothesis, not a proven mechanism, since the
+comparison is uncontrolled and we ran no spatial-shuffle control
+(Figure~\ref{fig:aggregation}).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.82\columnwidth]{aggregation_ablation.png}
+\caption{Axis-aggregation ablation: keeping the three per-taxel axes versus
+collapsing them to an L2 magnitude. The collapse cripples texture but spares
+stiffness for the classical models; the deep models are largely unaffected.}
+\label{fig:aggregation}
+\end{figure}
+
+\subsection{Memorisation gap}
+
+The in-distribution ceiling we reported earlier uses the random split, which can
+place near-duplicate trials of the same (object, position) on both sides of the
+partition, so we re-ran the in-distribution evaluation under the leak-free
+group-aware split to see how much of that accuracy is genuine.
+Table~\ref{tab:memgap} gives the result on A. The gap between the two splits is
+large and significant for every model: up to about $0.40$ of A's in-distribution
+combined accuracy is near-duplicate memorisation (InceptionTime falls by
+$0.405$). The honest within-distribution numbers are roughly $0.58$ to $0.74$
+combined for the strong models, still far above the $0.033$ chance level. The
+deep models memorise more than the classical ones (gaps of $0.33$ to $0.41$
+versus $0.17$ to $0.24$), which is the same ordering as the out-of-distribution
+collapse: the models that lean hardest on near-duplicate trials also transfer
+worst.
+
+\begin{table}[t]
+\centering
+\caption{In-distribution combined accuracy on A under the random (leaky) split
+versus the group-aware (leak-free) split (mean $\pm$ 95\% CI over 5 replicates).
+The gap is the memorisation attributable to near-duplicate trials; all four gaps
+are significant.}
+\label{tab:memgap}
+\begin{tabular}{lccc}
+\toprule
+Model & Random & Grouped & Gap \\
+\midrule
+NB            & $0.476 \pm 0.023$ & $0.301 \pm 0.071$ & $+0.174$ \\
+SVM           & $0.978 \pm 0.011$ & $0.743 \pm 0.076$ & $+0.235$ \\
+CNN           & $0.992 \pm 0.003$ & $0.666 \pm 0.027$ & $+0.325$ \\
+InceptionTime & $0.989 \pm 0.007$ & $0.584 \pm 0.063$ & $+0.405$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+The group-aware split is stricter than the prior work's random partition rather
+than closer to it. Because the prior work used a random split, its reported
+in-distribution accuracy is likely inflated by the same near-duplicate effect,
+though we cannot quote a corrected figure for it without access to its
+data~\cite{cmd_source}.
+
+\section{Limitations} % -------------------------------------------------
+\label{sec:limitations}
+
+This study has several limitations, and we state them plainly because the honesty
+bears on how far the results can be pushed.
+
+The raise magnitude is a design specification plus experimenter testimony, not a
+logged quantity. The pose metadata records only a 1.08 mm end-effector height
+difference between A and B, and there is no pose file for A\_lifted at all, so we
+claim the direction of the raise rather than a magnitude in millimetres. The
+two-step ladder is also not a set of clean single-variable contrasts: A\_lifted
+shares A's lateral pattern but crosses a session boundary, and the A\_lifted to B
+step changes the lateral pattern, the session, and the residual arm noise together,
+so we cannot isolate a pure positioning-noise effect from this data. A same-height,
+B-pattern, noise-only control is the obvious next experiment. We do, however, rule
+out the session boundary as the driver of the A to A\_lifted collapse: the
+post-release no-contact baseline shifts by only $0.33\%$ of the contact signal
+between the two sessions (Figure~\ref{fig:mechanism}a).
+
+The mechanism behind the texture collapse is identified only at the level of a
+covariate shift. We do not disentangle the sub-cause: contact depth, pressure
+redistribution, and fine alignment are confounded, so we treat the precise cause as
+a hypothesis, even though the per-taxel registration map (Figure~\ref{fig:mechanism}b)
+shows the shift is spatially structured.
+
+The classical-versus-deep out-of-distribution comparison is exploratory. The
+confidence intervals cover train and split variance over a fixed B test set and do
+not capture finite-test-set sampling, which would need a bootstrap over B that we
+did not run. There is also a model-family confound: the SVM's per-channel summary
+features are registration-invariant by construction, while the deep models stop
+early on a slightly leaky in-distribution validation slice, so the gap may reflect
+invariant features and a cleaner selection recipe rather than classical beating
+deep. The comparison survives a Bonferroni correction, but settling it needs control
+models (an SVM on deep features, and an out-of-distribution-selected deep model)
+that we did not build. We therefore read it narrowly, as a statement about these
+particular implementations under this protocol.
+
+The in-distribution ceiling is partly near-duplicate memorisation: the honest
+group-aware numbers are substantially lower than the random-split ones, and because
+the prior work used a random partition, the same effect very likely inflates its
+reported in-distribution accuracy too~\cite{cmd_source}.
+
+Two of the ablation conclusions are similarly hedged. The density ablation uses one
+specific 8-taxel subsample. The deep models' apparent robustness to axis collapse is
+a hypothesis rather than proof. We read it as a difference in sensor encoding rather
+than a saturation artefact, because the prior work's deep model dropped under the
+same collapse despite a comparable ceiling, but the comparison is uncontrolled and
+we ran no spatial-shuffle control to confirm it~\cite{cmd_source}.
+
+Finally, scope. The cilia comparison is untestable here, because the prior work
+never ran a raise and we have no ciliated-sensor data under the same shift, so it can
+only be a speculative remark. We implemented four of the prior work's eight models,
+and the SVM hyperparameters ($C=10$, $\gamma=\mathrm{scale}$) were fixed rather than
+tuned. The precision-versus-IK-residual experiment was scoped but not run.
+
+\section{Conclusions} % -------------------------------------------------
+\label{sec:conclusions}
+%
+We replicated single-grasp texture and stiffness recognition on a denser flat array
+and a lower-precision arm, and in distribution it reproduces and exceeds the prior
+work~\cite{cmd_source}. Using a purpose-built control set, we decomposed the
+out-of-distribution gap and found that a vertical grasp-height raise dominates the
+collapse, with texture fragile and stiffness robust, and we traced the cause to a
+contact-condition and sensor-registration covariate shift rather than lost
+information, since texture is recoverable within the raised set. The denser sensor
+buys resolution but not out-of-distribution robustness; directionality carries
+texture, replicating the prior work's aggregation ablation on a new sensor, while the
+deep models appear to recover texture from magnitude (a hypothesis). We also
+quantified a memorisation gap, larger for the deep models, which implies the prior
+work's in-distribution accuracy is likely inflated as well. The clearest next steps
+are the missing positioning-noise control that instead holds the height, lateral
+pattern, and session fixed and varies only the arm's residual per-move error, and a
+bootstrap over B together with the control models needed to settle the
+classical-versus-deep comparison.
+
+\section*{Acknowledgments}
+
+We thank the colleague who collected the silicone tactile dataset used in this work,
+including the raised control set, and who confirmed the collection details, namely
+the grasp-height raise and the uniform object texture.
+% Camera-ready (non-blind) acknowledgment: We thank Daqi Huang for collecting the silicone tactile dataset used in this work, including the raised control set, and for confirming the collection details, namely the grasp-height raise and the uniform object texture.
+%
+%
+%Future work will explore optimization of the CMD structure, such as utilizing softer silicone for the dome to improve stiffness invariance during off-centered grasps, and modulation of the grasping action, for example by increasing the grasping force (and reducing the grasping speed) to better disambiguate objects with high (and similar) stiffness.
+%
+% \textcolor{red!75!black}{We have demonstrated an effective sensor design and accurate machine learning models for the simultaneous classification of an object’s texture and stiffness from a single grasp motion.}
+% \textcolor{red!75!black}{
+% Across all evaluated approaches, strong performance was achieved under In-Distribution conditions, with good generalisation capabilities demonstrated in the Out-of-Distribution results. Additional experiments further highlighted the benefits of the dual-sensor configuration and explored the dynamics of the multi-channel signal.
+% }
+% \textcolor{red!75!black}{
+% Overall, the findings suggest that the Ciliated Magnetic Dome (CMD) sensor design is particularly well suited for capturing texture-related tactile features. Future work should investigate design modifications aimed at improving sensitivity to stiffness properties, as well as extending the evaluation to more complex manipulation tasks and a wider range of object interactions.
+% }
+
+
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.99\columnwidth]{figures/conf_mats_NEW_IVO/OOD/CAE/OOD_CAE_confusion_matrix_combined_refined.pdf}
+% \end{figure}
+
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.99\columnwidth]{figures/conf_mats_NEW_IVO/ID/CAE/ID_CAE_confusion_matrix_combined_refined.pdf}
+% \end{figure}
+
+% Across all evaluated approaches, strong performance was achieved under In-Distribution conditions, with deep learning models consistently outperforming traditional methods, indicating that the tactile signals contain rich and exploitable structure. However, a notable reduction in performance was observed under Out-of-Distribution evaluation, highlighting the challenges associated with generalisation to unseen contact conditions. Despite this, all models retained meaningful predictive capability, suggesting that the CMD sensor captures both fine-grained textural features and larger-scale deformation characteristics within a single grasp.
+
+% While the results demonstrate high classification accuracy, they remain dependent on the specific grasp pattern used during data collection, as the gripper operated with fixed speeds and timings. Future work should explore robustness under varying grasp parameters and interaction dynamics. Another promising direction is the use of regression-based approaches for material property estimation, particularly for quantities such as shore hardness, which exist on a continuous scale. Misclassifications frequently corresponded to neighbouring hardness classes, indicating that the models capture underlying structure in the data. A regression-based formulation may therefore provide a more informative and less discretised representation of these properties, as has been shown in prior tactile sensing work \cite{Nam2024shRegression}.
+
+
+% --------------------------------------- End of Document
+
+\ifCLASSOPTIONcaptionsoff
+  \newpage
+\fi
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

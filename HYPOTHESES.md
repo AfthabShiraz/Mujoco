@@ -20,6 +20,7 @@ them, and so nothing here is silently revised later.
 | D3 | **Taxel placement** uses `BODY_MAP` (`explore/taxel_map.py`), derived from the kinematic tree and validated by body-local mesh bounding box. 8 of 12 bodies match to 0.000 mm. | Established without external input; see `PROJECT_LOG.md` §1.5b. |
 | D4 | **Known limitation, accepted:** the four fingertips are a geometrically different part between the two model lineages (~10.3 mm longer in the RL lineage), so the lateral placement of 136 of 368 taxels is unverified against the physical robot. | Affects sim-to-real fidelity. Does **not** affect throughput, bottleneck location, or kernel correctness — this project measures performance. To be resolved with the supervisor when convenient, not as a blocker. |
 | D5 | **Correctness is defined against the CPU reference encoder** (`VirtualTaxelSensor`), not against the physical robot: given identical contacts, every implementation must reproduce it to an agreed tolerance. | Self-contained, and the strongest correctness claim available regardless. |
+| D9 | **Benchmarks run at `sim_dt = 0.01`, matching `leapXelaMjLab/env_cfg.py`** (`ctrl_dt=0.05`, `decimation=5`). The harness sets `mjm.opt.timestep` explicitly. | The scene includes `leapXela_generated_mjx.xml`, which declares `timestep=0.001` — **10× smaller than the supervisor trains at**. Left uncorrected, our env-steps/s would not be comparable to his training throughput (10× the steps for the same simulated robot time). Found and corrected 2026-08-13. The earlier `dt=0.001` sweeps are retained as `*_dt01`-less CSVs; all three used identical settings so their *ratios* were always sound. |
 | D6 | **Task, reward, RL algorithm inherited unmodified.** The observation space is the only thing that changes, plus whatever the profiler forces. | Preserves comparability with the supervisor's baseline. |
 | D8 | **Implementation ladder is Python → Triton → CUDA.** The plan's C++/OpenMP stage (§5 Phase 4) is **dropped**. | Afthab's call, 2026-08-13. The C++ stage taught CPU parallel decomposition and false sharing; that is real but it is not on the critical path to the GPU result, and the Triton→CUDA pair already covers the kernel-authoring skill. Revisit only if a CPU baseline is needed for the write-up. |
 | D7 | **Ceiling on env count is the DGX Spark's unified memory**, not a chosen number. The sweep runs to whatever N fits under a memory cap; 4096 is not assumed reachable. | See `PROJECT_LOG.md` §1.1. |
@@ -234,6 +235,25 @@ same scene and settings, kernel wired into the harness behind `--encoder triton`
 | 256 | 40,289 | 17,723 | 33,301 | 1.21× | 1.88× |
 | 1024 | 78,550 | 25,555 | 76,349 | **1.03×** | 2.99× |
 | 4096 | 129,682 | 28,177 | **119,681** | **1.08×** | **4.25×** |
+
+**REPLICATED AT THE SUPERVISOR'S TIMESTEP (2026-08-14).** All three sweeps re-run
+at `sim_dt = 0.01` per D9 (`*_dt01.csv`). Contacts rise from ~4.3 to **~7.5 per
+env** — larger steps mean deeper interpenetration — so this is a *harder* case
+for the encoder, and the finding survives it:
+
+| N | no touch | torch splat | Triton splat | cost torch | cost Triton |
+|---|---|---|---|---|---|
+| 64 | 15,999 | 11,264 | 13,960 | 1.42× | 1.15× |
+| 256 | 38,310 | 18,486 | 34,715 | 2.07× | **1.10×** |
+| 1024 | 78,349 | 25,148 | 77,361 | 3.12× | **1.01×** |
+| 4096 | 128,061 | 28,006 | **116,961** | **4.57×** | **1.09×** |
+
+**Cost of touch 4.57× → 1.09×, kernel gain 4.18×** — within 2% of the
+`dt=0.001` figures despite 75% more contacts. The result is not an artifact of a
+gentle contact regime. **Quote these numbers, not the `dt=0.001` ones**, since
+only these are comparable to the supervisor's training configuration.
+
+The original `dt=0.001` measurement, retained for reference:
 
 **The cost of tactile sensing at 4096 envs falls from 4.60× to 1.08×** — from a
 360% penalty to 8%. End-to-end gain 4.25× against the 4.37× Amdahl cap, i.e.
