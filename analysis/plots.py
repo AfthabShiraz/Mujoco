@@ -29,6 +29,7 @@ also differs in line style and marker so identity never rests on hue alone.
 from __future__ import annotations
 
 import csv
+import os
 import pathlib
 
 import matplotlib
@@ -43,9 +44,15 @@ RESULTS = ROOT / "benchmarks" / "results"
 OUT = ROOT / "analysis" / "plots"
 DPI = 150
 
-PHYSICS_CSV = RESULTS / "scale_sweep_physics_only.csv"
-SPLAT_CSV = RESULTS / "scale_sweep_splat.csv"
-TRITON_CSV = RESULTS / "scale_sweep_splat_triton.csv"
+# Which sweep set to plot. The `_dt01` CSVs ran at sim_dt=0.01, matching the
+# supervisor's env_cfg.py; the unsuffixed ones inherited timestep=0.001 from the
+# scene's included XML and are kept only for reference (see HYPOTHESES.md D9).
+# Override with SWEEP_SUFFIX="" to regenerate the older figures.
+SWEEP_SUFFIX = os.environ.get("SWEEP_SUFFIX", "_dt01")
+
+PHYSICS_CSV = RESULTS / f"scale_sweep_physics_only{SWEEP_SUFFIX}.csv"
+SPLAT_CSV = RESULTS / f"scale_sweep_splat{SWEEP_SUFFIX}.csv"
+TRITON_CSV = RESULTS / f"scale_sweep_splat_triton{SWEEP_SUFFIX}.csv"
 KERNEL_CSV = RESULTS / "kernel_bench.csv"
 
 # Okabe-Ito. BLUE/ORANGE are the two that must never be confused (they carry the
@@ -200,7 +207,11 @@ def setup_note(splat: dict[str, np.ndarray]) -> str:
     contacts = float(np.nanmean(splat["contacts_per_env"]))
     overflow = int(np.nansum(splat["overflow_worlds"]))
     return (f"MuJoCo Warp, DGX Spark (GB10, aarch64) · cube-reorient scene, hand at 60% closure · "
-            f"~{contacts:.1f} contacts/env · contact overflow: {overflow}")
+            # `overflow_worlds` counts worlds raising ANY Warp overflow bit, not
+            # contacts specifically. At sim_dt=0.01 the flag that fires is NEFC
+            # (constraint rows, njmax=120 -> wants 124); contacts sit at ~7/env
+            # against a 48 cap. Labelling this "contact overflow" would be wrong.
+            f"~{contacts:.1f} contacts/env · worlds w/ any overflow flag: {overflow}")
 
 
 # --------------------------------------------------------------------------- #

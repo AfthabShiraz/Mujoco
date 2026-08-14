@@ -248,6 +248,16 @@ for the encoder, and the finding survives it:
 | 1024 | 78,349 | 25,148 | 77,361 | 3.12× | **1.01×** |
 | 4096 | 128,061 | 28,006 | **116,961** | **4.57×** | **1.09×** |
 
+**Incidental finding — `njmax=120` is marginally tight at `sim_dt=0.01`.** At the
+supervisor's own timestep, **2 of 4096 worlds (0.049%)** raise `OverflowType.NEFC`;
+Warp reports *"nefc overflow — please increase njmax to 124"* (observed up to
+128). Contacts are nowhere near their limit: 7.1/env against the 48 cap, so this
+is **constraint-row overflow, not contact overflow**. It does not appear at
+`dt=0.001`. Minor at 0.05% of worlds, but it is the supervisor's configured value
+and worth reporting to him. ⚠ The harness's `overflow_worlds` column counts *any*
+overflow bit, so it must not be read as a contact-budget figure — and the plot
+subtitle labelling it "contact overflow" is wrong and needs correcting.
+
 **Cost of touch 4.57× → 1.09×, kernel gain 4.18×** — within 2% of the
 `dt=0.001` figures despite 75% more contacts. The result is not an artifact of a
 gentle contact regime. **Quote these numbers, not the `dt=0.001` ones**, since
