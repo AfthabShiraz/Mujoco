@@ -41,6 +41,10 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "benchmarks" / "results"
+# report.tex looks in figures/ (the template's convention). Keep real copies
+# there rather than a symlink -- Overleaf and some TeX setups will not follow a
+# symlinked directory, and the report then silently renders without figures.
+FIGURES_DIR = ROOT / "figures"
 OUT = ROOT / "analysis" / "plots"
 DPI = 150
 
@@ -734,7 +738,17 @@ def main() -> int:
           f"{kern['speedup_vs_eager'][k]:.0f}x")
     print(f"tactile stage vs kernel   = {stage:.3f} ms vs {kernel:.3f} ms  "
           f"({100 * (1 - kernel / stage):.0f}% pre-processing, inferred)")
+    _mirror_to_figures()
     return 0
+
+
+def _mirror_to_figures() -> None:
+    """Copy the generated PNGs to figures/ for the LaTeX report."""
+    import shutil
+    FIGURES_DIR.mkdir(exist_ok=True)
+    for png in sorted(OUT.glob("*.png")):
+        shutil.copy2(png, FIGURES_DIR / png.name)
+    print(f"mirrored {len(list(OUT.glob('*.png')))} figures -> {FIGURES_DIR}")
 
 
 if __name__ == "__main__":
