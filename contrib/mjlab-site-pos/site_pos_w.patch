@@ -1,0 +1,26 @@
+--- a/src/mjlab/entity/data.py
++++ b/src/mjlab/entity/data.py
+@@ class EntityData
+   @property
+   def site_pos_w(self) -> torch.Tensor:
+     """Site positions in world frame. Shape (num_envs, num_sites, 3)."""
+-    return self.site_pose_w[..., 0:3]
++    return self.data.site_xpos[:, self.indexing.site_ids]
+ 
+   @property
+   def site_quat_w(self) -> torch.Tensor:
+     """Site quaternions in world frame. Shape (num_envs, num_sites, 4)."""
+-    return self.site_pose_w[..., 3:7]
++    return quat_from_matrix(self.data.site_xmat[:, self.indexing.site_ids])
+ 
+   @property
+   def geom_pos_w(self) -> torch.Tensor:
+     """Geom positions in world frame. Shape (num_envs, num_geoms, 3)."""
+-    return self.geom_pose_w[..., 0:3]
++    return self.data.geom_xpos[:, self.indexing.geom_ids]
+ 
+   @property
+   def geom_quat_w(self) -> torch.Tensor:
+     """Geom quaternions in world frame. Shape (num_envs, num_geoms, 4)."""
+-    return self.geom_pose_w[..., 3:7]
++    return quat_from_matrix(self.data.geom_xmat[:, self.indexing.geom_ids])
