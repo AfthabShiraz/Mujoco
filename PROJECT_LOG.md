@@ -196,7 +196,7 @@ BODY_MAP = {
 }
 ```
 
-**Frame agreement, measured by body-local mesh bounding box** (*not* centroid — the RL meshes are decimated, so vertex density shifts the centroid and gives false positives; this cost one wrong intermediate result):
+**Frame agreement, measured by body-local mesh bounding box** (*not* centroid — corresponding meshes are re-exports whose vertices differ by up to 1.5 mm, which moves a centroid but not a bounding box; this cost one wrong intermediate result. ⚠ **The original reason given here — "the RL meshes are decimated" — is wrong; see §1.5b-bis.** The choice of bbox over centroid was still correct, for the reason now stated):
 
 | Bodies | Taxels | Result |
 |---|---|---|
@@ -212,6 +212,64 @@ Fingertip detail (`finger_3`→`if_ds`): faces at `min_x`, `max_y`, `min_z` alig
 Rejected alternatives: making mjlab load Lineage B (large change; `robot.xml` needs the compatibility fixups `scene_builder.py` applies), and regenerating Lineage A with taxels (needs taxel positions in Lineage A geometry — same unsolved problem).
 
 **This is a strong candidate for the first real contribution:** it blocks tactile-on-GPU entirely, it's tractable, and the artifact — a validated body map plus taxel sites in the mjx model — is reusable by Hamid, Pratik and `sparsh-skin-sim` alike.
+
+### 1.5b-bis — the two lineages share a CAD ancestor, and only the fingertip was revised (2026-08-15)
+
+Established by hashing the mesh assets directly, which is stronger evidence than
+the compiled-model bounding boxes above and **corrects two claims in §1.5b**.
+
+Both lineages ship an `assets/` directory; **17 `.stl` filenames appear in both**:
+
+| | count |
+|---|---|
+| shared `.stl` files | 17 |
+| **byte-for-byte identical** | **10** |
+| same triangle count | **17 of 17** |
+| different triangle count | **0** |
+
+The byte-identical ten are `leap_hand_xela_back_cover`, `leap_hand_xela_bottom`,
+`leap_hand_xela_motorholder`, `leap_hand_xela_side_cover`, `outer_skin_v1_3_1`,
+`palm_face`, `top_palm`, `thconnector`, `clipper`, `uspa46`.
+
+**Correction 1 — "two independent CAD exports have no reason to agree" is wrong.**
+Independent exports do not produce byte-identical files. These hands come from one
+CAD project exported twice. The mapping risk §1.5b worried about was real to check
+but the underlying models are far more closely related than assumed.
+
+**Correction 2 — the RL meshes are NOT decimated.** All 17 shared meshes have
+*identical* triangle counts (e.g. `p2_unified.stl`: 17,076 in both). The differing
+files are re-exports: same triangle count, same bounding box to 0.01 mm, vertices
+differing by ≤1.5 mm. Using bbox over centroid was still the right call — 1.5 mm of
+vertex drift moves a centroid — but the reason recorded in §1.5b was not the real one.
+
+**The fingertip is a genuinely different part, and this is the useful finding.**
+It is the one component that does not share a filename at all:
+
+| lineage | mesh file | dimensions (mm) |
+|---|---|---|
+| RL / mjx | `fingertop_unfied.stl` | 39.20 × 34.85 × **72.31** |
+| tactile | `fingertip_fix.stl` | 34.60 × 30.00 × **61.98** |
+
+72.31 − 61.98 = **10.33 mm**, reproducing the figure measured from the compiled
+models exactly, now traced to source geometry. Mesh-to-body confirmed in both XMLs:
+tactile `finger` uses `fingertip_fix`; RL `if_ds`/`mf_ds`/`rf_ds` use
+`fingertop_unfied`, and `th_ds` uses `thfingertip_unified`.
+
+**So this is not an irreconcilable mismatch between two modelling efforts — it is
+one part that was revised, captured at two different revisions.** There is a
+definite answer to which one is the physical robot, and Hamid can give it in a
+line. **Ask it in this form**, not the §1.5b form:
+
+> Your mjx and tactile models share CAD ancestry — ten of the mesh files are
+> byte-identical. But the fingertip is a different part between them:
+> `fingertop_unfied.stl` is 72.31 mm along its long axis where `fingertip_fix.stl`
+> is 61.98 mm. The taxel layout was authored against the shorter one. Which is the
+> physical robot?
+
+Incidentally the unshared meshes show what each lineage was tooled for: RL carries
+`outer_skin_collision_1..6.stl` and `sphere.stl` (simplified collision primitives);
+tactile carries `pointcloud.stl`, `4x6.stl`, `4_6_origin.stl` (taxel-layout
+scaffolding). Same robot, two jobs.
 
 **Consequence:** before any encoder work, the 368 taxel sites must exist in the model mjlab loads. That is model plumbing, not kernel work, and it is Phase 0/1. Options to weigh: (a) bump the submodule to current `main` and port `build_scene_xml`'s site injection into the mjlab spec pipeline (mjlab uses `MjSpec`, which is *newer and nicer* than the ElementTree hack `scene_builder.py` had to use for MuJoCo 3.1.1 — this may be genuinely cleaner); (b) generate a static taxel-site XML once and load that. Bumping the submodule is not free — 13 commits including flex work and a timestep change.
 
@@ -297,7 +355,473 @@ body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, entry.body)
 
 ## 2. Session log
 
-### 2026-08-13 — session 2 (this one)
+### 2026-08-14 — session 6: every sweep re-run under real grasp motion, and the report written
+
+**Why.** Every throughput number banked before this session was taken at one
+frozen pose: 16 actuators to 60% of range, settle, hold for the whole timed
+region. ~7.5 live contacts/env, constant, and *identical in every world*. That
+is a weak test of a kernel whose cost tracks live contacts, and it flatters the
+Triton path's ratio against a dense baseline that is contact-count blind. Both
+numbers were honest; the operating point was soft.
+
+**`GraspDriver`, new in `harness.py`, behind `--motion {static,grasp}`.** Drives
+the seven patterns from `explore/05_grasp_motions.py` (themselves a verbatim
+port of his `sparsh-skin-sim/util/motion_util.py`). World `w` runs pattern
+`w % 7` at a phase offset, so the batch spans the whole modulation at any
+instant. `ctrl` is rewritten each step from a precomputed GPU table — one gather,
+one copy, no host round trip — and charged to every variant equally, `none`
+included. `--motion static` reproduces the old operating point exactly, so the
+banked CSVs stay reproducible.
+
+**Contact regime it produces at N=4096:** per-world count 0 to 25, population
+mean 7.33/env against the frozen pose's 7.5. So the batch now contains idle
+worlds and loaded worlds simultaneously, which is what puts real load imbalance
+in front of a one-block-per-(env, taxel-tile) kernel.
+
+**The result survives, and improves:**
+
+| path | frozen steps/s | grasp steps/s | frozen cost | grasp cost |
+|---|---|---|---|---|
+| physics only | 128,061 | 126,637 | 1.00× | 1.00× |
+| eager splat | 28,006 | 27,642 | 4.57× | **4.58×** |
+| Triton splat | 116,961 | 125,535 | 1.09× | **1.01×** |
+| native touch | 125,877 | 117,601 | 1.02× | **1.08×** |
+| touchgrid `object` | 29,440 | 27,942 | 4.35× | **4.53×** |
+
+Encoder stage 2.394 ms under motion against 2.432 ms frozen; eager unchanged at
+112.99 vs 112.19 ms, exactly as its contact-blind `B × C × T` shape predicts.
+
+**Why Triton *improves* rather than degrades — mechanism, not a lucky draw.**
+Pass 2 is indexed by (env, taxel tile): a program walks its own env's contact
+slots, finds them invalid, and leaves the loop. An idle world costs a scan of its
+slot array, not an evaluation, and with no atomics and no cross-world sync it
+does not hold up a loaded world either. Under motion many worlds sit below the
+frozen pose's uniform occupancy, so total work falls.
+
+**⚠ Read 1.01 as "not resolvable", not as a bound.** At N=1024 the Triton path
+measures 76,891 against a physics-only 72,804 — nominally faster than doing no
+tactile work at all. The honest statement is that under motion at large N the
+cost is not distinguishable from run-to-run variation. And the upper end is still
+unmeasured: no condition holds every world near the 48-slot cap, and the
+synthetic fully-occupied case costs 1.27 ms (2.2× the measured regime).
+
+**Touchgrid under motion sharpens the budget finding.** Peak per-world contact
+count rises to **390**, against the 232 measured at the frozen closing grasp, with
+no overflow at the 256-slot allocation. 151,669 patch-cube contacts and **zero**
+patch-patch, confirming the H3 mechanism under motion too. **The budget a
+geom-based grid needs is a property of the motion, not of the pose you benchmark
+— sizing `nconmax` from a static grasp under-provisions it.**
+
+**A verification gate that cried wolf.** The first grasp-motion touch sweep
+aborted at N=1: the gate read all 421 sensors at a single instant, got zero, and
+stopped. That was a false alarm — the `tap` pattern deliberately releases toward
+pregrip at 1.5 Hz, and at N=1 there is one world running one pattern at one
+phase, so a quiet frame means an open hand, not a broken readout. The gate now
+samples a window (≤200 steps) and takes the best frame; it still catches a sensor
+array that *never* fires, which is what it is for. Sweep then completed 13/13.
+
+**Also this session:** `report.tex` written — the full IEEE write-up covering all
+four representations, the profiling verdict, the kernel, the mjlab integration
+and the threats to validity.
+
+**⚠ Correction to a report claim, made 2026-08-15.** The report stated that the
+grasp-motion native-touch sweep never completed and that
+`scale_sweep_grasp_touch_dt01.csv` recorded a failed run. That was written at
+19:39 against a memory of the aborted first attempt; the gate had been fixed and
+the sweep re-run successfully at 16:14 the same day, 13/13 rungs. Corrected in
+`report.tex` (Results, Threats, Future Work, appendix). **Lesson: when a run is
+re-done after a fix, update the prose in the same sitting — a stale "this
+failed" is worse than no claim, because it is checkable and wrong.**
+
+### 2026-08-15 — session 7: repo audit, four fixes
+
+Read the repo end to end and reconciled the documents against the banked data.
+Four things were out of step; all fixed.
+
+1. **The session-6 entry above did not exist.** The grasp-motion work was in the
+   code, the CSVs and the report, and nowhere in this log or in `HYPOTHESES.md`.
+2. **`report.tex` claimed the grasp-motion touch sweep failed** — see the
+   correction above.
+3. **`SplatEncoder.C` still ignored `--nconmax-per-env`** (flagged as a latent
+   issue in session 4 and still live). `harness.py` built the encoder without
+   `contacts_per_env`, so `--tactile splat --nconmax-per-env 256` allocated 256
+   slots per world in `put_data` while the encoder bucketed into 48, silently
+   discarding every contact past the 48th and reporting it as a *drop* rather
+   than as a misconfiguration. Fixed by threading `nconmax_pe` through.
+   Verified: at N=16 the default path is unchanged (`contacts_per_env_cap` 48,
+   `naconmax_total` 768, check A 2.98e-07 PASS) and `--nconmax-per-env 256` now
+   reports cap 256 / total 4096, check A 4.77e-07 PASS.
+4. **`README.md` had drifted a long way** — it was frozen at the post-kernel
+   state of session 3. Fixed: headline and every results table re-based on the
+   `_dt01` sweeps (4.57× → 1.09×, Amdahl 4.34×, crossover share 53.3%); status
+   corrected (H3/H4 resolved, only H5 open); added §4.9 (the other three
+   representations plus the `nconmax` law), §4.10 (the mjlab integration), the
+   grasp-motion result, and the widened-oracle findings F1–F3 in §5; sweep
+   commands updated for the new flags.
+5. **`README.md` mis-attributed `VirtualTaxelSensor` to Hamid.** It is **Pratik
+   Ingle's** work (`5f305a8`, 2026-08-03). `report.tex` had already been
+   corrected; the README had not. It is the oracle for every number in this
+   project, so this is the attribution that most needs to be right.
+6. `analysis/plots.py`'s docstring listed the pre-`_dt01` CSV names while its
+   code defaults to `SWEEP_SUFFIX="_dt01"`. Docstring corrected.
+
+**Verification run this session:** all **11 tests pass** (v1 + v2 oracle, Triton
+vs both fixtures, edge cases, determinism 20/20 bit-identical at B=1024),
+float64 semantic bound 4.16e-07 on the 632-frame fixture.
+
+**Flex ratio mis-attributed in the report's Table I — fixed.** The footnote said
+the ≈540× ratio was "per-step latency at N=1024". Two errors: **there is no N=1024
+flex latency measurement** (the rungs are N = 1, 16, 64, 256; only a *memory*
+figure exists at 1024), and raw per-step latency at N=256 gives **107.6×**, not
+540 — the 540 needs the ×5 matched-simulated-time correction, so as written it
+looked like a 5× error. Both derivations agree once stated properly (538.1 via
+latency×5, 539.6 via equivalent throughput). Footnote rewritten in `report.tex`
+and `README.md`; the abstract, flex section and conclusion were already correct.
+**Found by Afthab asking what the sentence meant.**
+
+**Mesh-asset provenance checked (§1.5b-bis), prompted by Afthab asking whether the
+two hands come from the same CAD model.** They do — 10 shared `.stl` files are
+byte-identical. This corrects two claims in §1.5b (the "independent exports"
+framing and the "RL meshes are decimated" reason) and, more usefully, localises
+D4 to a single revised fingertip part with a definite answer. Recorded as F4 in
+`HYPOTHESES.md`; report's method and threats sections updated. **Worth noting how
+this surfaced: it came from a question during a read-through, not from the
+measurement plan.**
+
+**Figures audited, and two added.** Checked whether the report's 8 figures had
+gone stale: regenerated them and all 8 came back **byte-identical**, and every
+number `plots.py` derives matches the report. They were current; the gap was
+*coverage* — every figure was about physics vs eager vs Triton, and nothing from
+sessions 4–6 had one.
+
+* **`benchmarks/contact_budget_sweep.py`, new.** The `nconmax` law was H3's most
+  generalisable result and it lived only as one-off numbers in the register. Now
+  a proper sweep: one memory-capped child per budget, a CSV, a least-squares fit
+  printed at the end. Run **twice**, on scenes 5× apart in geom count, because
+  the claim is that the geometry is irrelevant:
+
+  ```
+  bare scene (71 geoms)         ms/step = 5.51 + 0.1428 x nconmax   R² = 0.9978
+  grid, collide off (371 geoms) ms/step = 4.73 + 0.1436 x nconmax   R² = 0.9955
+  ```
+
+  **Slopes agree to 0.6%**, occupancy pinned at 7.4–7.7 contacts/env at all
+  twelve points, throughput 78,045 → 17,062 env-steps/s (4.6×). The original
+  0.145 slope **reproduces to within 1%** — worth knowing, since it was banked
+  from single runs. Banked as `contact_budget_none_n1024.csv` and
+  `contact_budget_grid_off_n1024.csv`.
+* **Figure I** — the comparable representations at N=4096 as one bar chart.
+  **Flex is deliberately omitted rather than plotted**, because H4 says in terms
+  that its `env_steps_per_sec` is not a like-for-like bar; it stays in the
+  report's table where the dagger travels with it. The touchgrid's bar is
+  annotated with the larger budget it needs.
+* **Figure J** — the budget law, both series with fitted lines. The two lines
+  sit almost exactly on top of each other, which is the whole argument.
+* Report updated: both figures wired in with captions, §H3's scan paragraph
+  rewritten around the banked data, the Future Work item narrowed (the sweep now
+  exists; what is still open is whether the slope varies with N or with the
+  model), and the appendix gained the commands and the two CSVs.
+
+### 2026-08-14 — session 4: the other three tactile representations measured
+
+**Goal:** run the experiments for the three representations that had not been
+swept. The splat was already done (torch / compile / triton, 13 rungs). This
+session did native `<touch>`, the binary touchgrid, and flex.
+
+**Where each stood at the start:** the `--tactile touch` path was already written
+into `harness.py` (uncommitted, 04:15 that morning) but had **never been run** —
+no CSV existed. Touchgrid and flex did not exist at all.
+
+#### Native `<touch>` (421 sensors) — swept, and it is essentially free
+
+13/13 rungs to N=4096, `benchmarks/results/scale_sweep_touch_dt01.csv`.
+**125,877 env-steps/s at 4096 against bare physics's 128,061 — a 1.7% tax.**
+The `naconmax × 421` dispatch measures 0.005–0.14 ms/step, at or below the
+timing noise floor at every single N. It never resolves above noise.
+
+Two things made this measurable at all, both already documented in the harness:
+the sensors had to be *injected* into the RL scene (the supervisor's standalone
+touch model reads exactly zero — its sensor pads were reduced to visual meshes,
+so the nearest contact is 9.42 mm from a 1.00 mm sensor zone), and the cost had
+to be extracted as a difference of fused loops, because Warp computes touch
+inside `mjw.step` and there is no stage to put a clock around.
+
+**Tell Hamid this one.** It is the cheap path, it already works on GPU, and it
+costs ~2% at training scale.
+
+#### Binary touchgrid (300 patch geoms) — the session's real finding
+
+Full write-up in `HYPOTHESES.md` H3. The short version, because the mechanism is
+not what anyone predicted:
+
+* At the supervisor's `nconmax=48 / njmax=120` the touchgrid **crashes**
+  mujoco_warp — illegal memory access in `ccd_kernel`, not a graceful drop.
+  Measured requirement is ncon 232 / nefc 944 vs the bare scene's 24 / 112.
+* The contact explosion is **intrinsic**: 223 of the 232 peak contacts are
+  patch-vs-cube, with zero self-collision.
+* But the contacts are **not what costs**. Holding the budget fixed, turning the
+  patches' collisions on costs nothing (29,440 vs 28,926 env-steps/s at N=4096).
+  300 extra non-colliding geoms cost 2.4%.
+* **The cost is the allocation.** `ms/step ≈ 5.3 + 0.145 × nconmax` at N=1024
+  with the live contact count pinned at 7.4/env. Raising `nconmax` 48→256 costs
+  71% of throughput with identical physics. Raising `njmax` costs nothing.
+* Mechanism confirmed in source: mujoco_warp sizes its launches off
+  `d.naconmax`, the allocation, not the live count — `collision_convex.py:1250`,
+  `constraint.py:5327`, `smooth.py:2941` (`dim=(nacttrnbody, naconmax, nv)`),
+  and others.
+
+**Consequence worth carrying into every later result: `nconmax` is a throughput
+parameter, not a safety margin.** This reframes open question 4 for Hamid from
+housekeeping into something with a 3.4× number attached.
+
+**A wrong turn, recorded because the correction matters.** The first reading of
+the 232 contacts blamed D4 (patches injected into the RL lineage's
+differently-shaped links), on the evidence that the donor model alone peaks at
+38 contacts. That control was invalid — **the donor model standing alone has no
+cube in it**. Classifying contacts by what they touch is what settled it. The
+misleading comment in `build_touchgrid_model` was corrected in the same session.
+
+#### Flex / bubble skin (H4) — it runs on Warp, and it is ~540× slower
+
+`benchmarks/flex_probe.py`, deliberately separate from `harness.py`: the flex
+hand is a different body tree (387 bodies / 1120 joints / 18 flexes / 386 eq
+constraints) in the *tactile* lineage, not something injectable into the pinned
+rigid RL model. Its `env_steps_per_sec` is therefore **not** a like-for-like
+fourth bar in the cost-of-tactile-sensing figure; `ms_per_step` is a legitimate
+order-of-magnitude comparison and that is what gets reported.
+
+* `put_model` succeeds — **flex is viable on MuJoCo Warp**, as the plan
+  suspected and MJX-JAX cannot do at all.
+* `put_data` demands `njmax ≥ 3030` per world, and says so *cleanly* at
+  allocation time. Worth contrasting with the touchgrid, which announces the
+  same class of problem by dying inside a CUDA kernel.
+* **⚠ The first flex numbers in this log were wrong and have been corrected.**
+  `flex_probe.py` forced `timestep=0.01` to match `env_cfg.py`. The flex model
+  declares **`timestep=0.002` with 50 solver iterations** and does not survive
+  0.01 — MuJoCo prints `Nan, Inf or huge value in QACC ... the simulation is
+  unstable` and the Kelvin-Voigt readout returns ~1e5 N. Everything measured at
+  dt=0.01 is superseded. A second, smaller bug rode with it: the settle was a
+  fixed 60 steps, which is 0.6 s at dt=0.01 but 0.12 s at 0.002 — too short for
+  the hand to close, so the first corrected run reported zero contacts. Settle is
+  now specified in simulated seconds. Found while debugging the splat-vs-flex
+  comparison, which is what surfaced the instability.
+* Corrected, at native settings, gripping, and rescaled to matched simulated time
+  (a 0.002 s step advances 1/5 as far, so raw steps/s overstates flex 5x):
+  N=1 → 137.1 ms/step (**1** equiv env-step/s); N=64 → 256.9 ms (**50**, vs
+  rigid 15,999 → **~320×**); N=256 → 719.2 ms (**71**, vs rigid 38,310 →
+  **~540×**).
+* Solver iterations are NOT the driver (50 vs 5 → 159.8 vs 159.1 ms). The
+  timestep is.
+* **Where the time goes** (N=64 ablation): ~37% constraint solver, ~63% forward
+  dynamics over 387 bodies / 1120 DoF, **~1% contacts**. A kernel cannot help —
+  it is all inside `mjw.step`, and the readout we would control is a few thousand
+  flops against ~200 ms.
+* Memory never binds: 0.75-0.81 GB throughout. This is the second time D7's
+  memory-ceiling assumption has failed to bind; time is the constraint.
+
+#### Harness changes (all in `benchmarks/`)
+
+* `--tactile touchgrid` with `--touchgrid-collide {object,naive,off}`;
+  `build_touchgrid_model`, `TouchgridReadout`, `verify_touchgrid`.
+* `--nconmax-per-env` / `--njmax-per-env` are now flags rather than constants,
+  which is what made the budget isolation above possible. Defaults are unchanged
+  at the supervisor's 48 / 120, so every banked sweep stays reproducible.
+* `benchmarks/flex_probe.py`, new.
+* **Latent issue, not fixed:** `SplatEncoder.C` still reads the module constant
+  `NCONMAX_PER_ENV` rather than the CLI value, so running `--tactile splat` with
+  a raised budget would silently mismatch. Harmless today (the splat sweeps all
+  used defaults) but it will bite whoever tries splat-at-raised-budget.
+
+#### Reproduction check — because two GPU jobs briefly overlapped
+
+A short flex `put_model` probe was running on the GPU during the tail of the
+touchgrid sweeps. Contended timings are worthless, so the key rungs were re-run
+on an idle GPU:
+
+| measurement | banked | re-run idle |
+|---|---|---|
+| physics only, N=4096 | 128,061 | 128,991 |
+| physics only, N=1024 | 78,349 | 74,201 |
+| touchgrid `off`, N=4096 | 124,963 | 127,291 |
+| touchgrid `object` bigbudget, N=4096 | 29,440 | 29,902 |
+
+All within ~5%, so the overlap did not distort the sweeps. The `nconmax`
+isolation and scan — the runs the H3 mechanism claim actually rests on — were
+made with the GPU idle throughout.
+
+**Practice note:** run one GPU job at a time on this box, and re-run rather than
+reason about it when that slips. A separate contaminated measurement in this
+session (a `--tactile none` regression check taken while flex N=1024 was
+running) read 4× slow and would have looked like a real regression.
+
+**New CSVs:** `scale_sweep_touch_dt01.csv`,
+`scale_sweep_touchgrid_object_dt01.csv`,
+`scale_sweep_touchgrid_off_dt01.csv`,
+`scale_sweep_touchgrid_off_bigbudget_dt01.csv`.
+
+**Not done this session:** figures were not regenerated for the three new
+representations, and `report.tex` was not updated. `HYPOTHESES.md` H3 is
+resolved; H4 has the numbers but its resolution entry still needs writing.
+
+### 2026-08-14 — session 5: into the supervisor's environment, and a comparison that isn't valid yet
+
+#### Tactile observations now run inside `leapXelaMjLab` (rungs 0–3 of 4)
+
+**`uv sync` works on the Spark.** mjlab 1.5.3 pinned at `f643d24` by his own
+`uv.lock` (so reproducible, and the same version he gets), torch 2.13.0,
+warp-lang 1.15.0, mujoco/mujoco_warp **3.10.0.3** — note that is *older* than the
+3.11.0 our benchmarks used. Installed into `third_party/leapXelaMjLab/.venv`;
+our own `.venv` is untouched.
+
+**Working, end to end.** The actor observation goes from 57 to **1161** dims,
+1104 of them live 3-channel taxel readings from the Triton kernel, computed every
+control step inside his task with his rewards, resets and randomisation.
+
+**Cost in the real environment, N=2048:**
+
+| | mjlab as shipped | with the `site_pos_w` fix below |
+|---|---|---|
+| no tactile | 16.16 ms/env-step | 14.05 ms |
+| **368 taxels** | 50.70 ms (**3.14×**) | **16.67 ms (1.19×)** |
+
+**1.19× is the real answer** and it corroborates the harness's 1.17× prediction.
+Read the diagonal: with the fix applied, full tactile costs about what his
+current no-tactile setup costs today.
+
+**Three portability traps, all of which fail silently or fatally:**
+1. **mjlab namespaces everything** — bodies are `robot/palm`, the cube geom is
+   `cube/cube`, sites become `robot/taxel_017`. `BODY_MAP` holds bare names, so
+   without a prefix every lookup misses. `prepare_static` raises rather than
+   zeroing, so it fails loudly — but only because the prefix is threaded through
+   (`SplatEncoder(name_prefix=...)`, new).
+2. **`TaxelEntry` is frozen** — the prefix rewrite must use `dataclasses.replace`,
+   as `remap_layout` already does.
+3. **`wp.set_stream` segfaults inside mjlab.** `Simulation.__init__` captures
+   `step`/`forward`/`reset`/`sense` into CUDA graphs bound to the Warp stream
+   current at capture time (`sim.py:347`); observation terms are built *after*.
+   Repointing the stream under a captured graph dumps core. The harness does this
+   legitimately because it owns its Warp context. Inside mjlab, order with
+   `torch.cuda.current_stream().wait_stream(...)` instead — measured at 0.02 ms.
+
+New: `src/mjlab_tactile/taxel_term.py`, `benchmarks/mjlab_rung3.py`,
+`benchmarks/mjlab_diag.py`, `benchmarks/mjlab_verify_patch.py`.
+
+#### An mjlab bug worth 3.31×, unrelated to tactile
+
+`EntityData.site_pos_w` returns `self.site_pose_w[..., 0:3]`, and `site_pose_w`
+gathers every site's position **and** 3×3 orientation, runs `quat_from_matrix`
+over all of them, builds an `(N, nsite, 7)` tensor — then three columns are
+sliced out and the quaternions discarded. The reorient task does this twice per
+step to fetch **one** site's position (`_palm_pos_w`, actor) and four
+(`fingertip_positions_rel_palm`, critic).
+
+With the stock 68 sites that is wasteful but cheap. With 436 it becomes the
+largest cost in the environment. Patching that one property: **49.92 → 15.07 ms**
+at N=2048. It also speeds up the *no-tactile* env 16.16 → 14.05 ms, which is the
+proof it is not our bug.
+
+**Verified not to change results** (`mjlab_verify_patch.py`) — this was checked
+only after Afthab challenged a speedup reported without verification, which was
+the right call:
+* `torch.equal(site_pos_w, site_xpos[:, ids])` → **True**, max|diff| **0.0** over
+  64×435×3. `cat([pos, quat])[..., 0:3]` is `pos` by construction.
+* step-0 observations bitwise identical.
+* no in-place writes to any of the six `*_pos_w`/`*_quat_w` properties anywhere
+  in mjlab or our code — so returning a view rather than a fresh tensor is safe
+  today, though a PR should say so.
+* Multi-step divergence is **not** evidence either way: the env is not
+  reproducible run-to-run (domain randomisation), and unpatched-vs-unpatched
+  diverges as much as unpatched-vs-patched.
+
+**Upstream state:** the pattern is in **six** property pairs, still present on
+`main` today. `site_*` and `geom_*` are the expensive ones (they call
+`quat_from_matrix`). mjlab is 2.8k stars, Apache-2.0, and merges outside PRs
+(18 of the last 60 from 8 non-maintainers). **No PR opened yet** — Afthab's call.
+
+#### Splat vs flex — the experiment is built, and is NOT valid yet
+
+Motivation: his dataset pipeline records **flex** quantities, and flex cannot run
+at RL scale, so if flex-like signal is ever wanted in a policy something fast must
+stand in for it. Is the splat encoder that thing?
+
+Built: `explore/08_splat_vs_flex.py`, `explore/09_render_splat_vs_flex.py`,
+`explore/vendor/flex_util.py` (his Kelvin–Voigt estimator, vendored unmodified
+with provenance).
+
+**Solved:** patch correspondence — 18/18 paired by rest-pose geometry,
+size-constrained, one-to-one, residuals 2.5–10.4 mm. Deliberately NOT by name:
+the splat patch ids (`4_4_1`, `4_6_2`) encode an undocumented ordering and three
+flex patches sit on bases `BODY_MAP` fuses into `palm`. Also confirmed the two
+hands share the same 16 actuator **names**.
+
+**Four setup bugs found, in order:**
+1. No pregrip settle → the rigid hand never gripped, splat read exactly zero on
+   three of seven patterns. (05 holds at pregrip for 300 steps; fixed, and now
+   specified in simulated seconds.)
+2. **Only 2 of 16 actuator RANGES match.** `grasp_target` returns
+   `lo + fraction*(hi-lo)`, so the same fraction poses the two hands differently.
+   Fixed by evaluating the pattern once on the flex model and applying the
+   resulting **absolute joint angles** to both. This also removes the need for
+   05's `THUMB_OPPOSED_FRACTION` workaround, which existed for this reason.
+3. Flex forced to dt=0.01 → unstable (see the H4 correction above).
+4. **⚠ STILL OPEN: the flex hand drops the cube.** It travels
+   `[0.11, 0, 0.10]` → `[-0.17, -0.15, -0.21]`, and **39 of its 43 contacts are
+   skin-on-skin, only 4 involve the cube**. So the comparison currently pits a
+   hand gripping an object against a hand that has let go.
+
+**Consequence: every splat-vs-flex agreement number so far is void.** Do not
+quote the −0.066 correlation. Fixing it needs a grasp tuned to hold on the flex
+hand — the same work 05 had to do for the rigid hand.
+
+#### What DOES stand: the splat is blind to fingertip contact
+
+Independent of flex, from the rigid side alone:
+
+```
+contacts by body:  palm 4, if_ds 2, mf_ds 2, rf_ds 1, th_mp 1
+taxels fired:      1 of 368, palm only
+bodies WITH contact but ZERO taxels firing: if_ds, mf_ds, rf_ds, th_mp
+```
+
+All four fingertips touch the cube; none of their 120 taxels fire. This is F3/D4
+finally showing a functional consequence.
+
+**Cutoff sweep — the problem is positional, not a threshold.** Widening
+`kernel_cutoff` from the reference 10 mm:
+
+| cutoff | fingertip patches active | notes |
+|---|---|---|
+| 10 mm | 0 | the reference constant |
+| 13 mm | 0 | still nothing |
+| 16 mm | 2 | ~0.5 of 30 taxels/frame |
+| 20 mm | 2 | identical to 16 mm |
+
+So "just raise the cutoff" does not work, and would break D5 anyway (the encoder
+would no longer reproduce the reference the oracle validates against). The
+override is behind `--cutoff-mm` and prints a warning naming D5.
+
+**Reframe D4.** It was logged as "affects sim-to-real fidelity, does NOT affect
+throughput, bottleneck location or kernel correctness — not a blocker." That was
+right for the performance work and is now insufficient: the encoder cannot see
+fingertip contact on this hand, and fingertips are where in-hand manipulation
+happens. **This is now the highest-value question for Hamid.**
+
+#### Process notes, all of which cost real time today
+
+* **Rendering earns its keep.** The flex-drops-cube bug was invisible in the
+  numbers and obvious in the picture. Ask for the image earlier.
+* **`pkill -f <pattern>` kills its own shell** when the invoking command line
+  contains the pattern. That was the mysterious `exit 144` on three attempts.
+  Use `ps -eo pid,comm,args | awk '/pat/ && $2 ~ /python/ {print $1}' | xargs kill`.
+* **Pipes defeat `python -u`.** `| head` / `| tee` buffered output and made a
+  working 15-minute job look like a hang. Redirect to a file.
+* **Estimate runtime before setting `timeout`.** A run was killed at 14:31 of a
+  900 s limit.
+* **Fixed step counts are a trap once dt varies.** Settle in simulated seconds.
+* Run one GPU job at a time; a contended `--tactile none` check read 4× slow and
+  looked like a regression.
+
+### 2026-08-13 — session 2
 
 **Started with:** a lost session. Memory directory was empty; the previous conversation's history was gone.
 
